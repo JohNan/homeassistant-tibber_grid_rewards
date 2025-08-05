@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import voluptuous as vol
 from homeassistant import config_entries
@@ -17,6 +18,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.data = {}
         self.homes = {}
         self.flex_devices = {}
+        self.validation_task: asyncio.Task | None = None 
 
     async def async_step_user(self, user_input=None):
         errors = {}
@@ -38,7 +40,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.warning("No homes found on Tibber account.")
                     return self.async_abort(reason="no_homes")
 
-                self.homes = {home["id"]: home["id"] for home in homes_data}
+                self.homes = {home["id"]: home["title"] for home in homes_data}
                 return await self.async_step_select_home()
 
             except TibberAuthError:
@@ -69,10 +71,22 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_validate_grid_reward(self, user_input=None):
-        """Show progress and start validation task."""
-        return self.async_show_progress_create_task(
-            task=self._validate_grid_reward(),
-            next_step_id="validation_complete",
+        if self.validation_task is None:
+            _LOGGER.debug("Creating validation task")
+            self.validation_task = self.hass.async_create_task(self._validate_grid_reward())
+
+        if self.validation_task.done():
+            result = self.validation_task.result()
+            _LOGGER.debug(f"Validation task with result: '{result}'")
+            if result != "success":
+                return self.async_abort(reason=result)
+
+            return self.async_show_progress_done(next_step_id="select_devices")
+
+        return self.async_show_progress(
+            step_id="validate_grid_reward",
+            progress_action="validating",
+            progress_task=self.validation_task,
         )
     
     async def _validate_grid_reward(self):
