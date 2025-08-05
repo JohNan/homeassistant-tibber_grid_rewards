@@ -1,3 +1,4 @@
+
 from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import httpx
@@ -47,7 +48,7 @@ async def test_fetch_token_generic_error(api):
     with pytest.raises(TibberException):
         await api.fetch_token()
 
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_get_homes_success(mock_fetch_token, api):
     mock_fetch_token.return_value = "test_token"
     mock_response = MagicMock()
@@ -61,7 +62,7 @@ async def test_get_homes_success(mock_fetch_token, api):
     assert homes[0]["id"] == "home1"
     api._client.post.assert_called_once()
 
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_get_homes_connection_error(mock_fetch_token, api):
     mock_fetch_token.return_value = "test_token"
     api._client.post.side_effect = httpx.HTTPStatusError(
@@ -71,7 +72,7 @@ async def test_get_homes_connection_error(mock_fetch_token, api):
         await api.get_homes()
 
 @patch("websockets.connect")
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_validate_grid_reward_success(mock_fetch_token, mock_ws_connect, api):
     mock_fetch_token.return_value = "test_token"
     mock_websocket = AsyncMock()
@@ -90,7 +91,7 @@ async def test_validate_grid_reward_success(mock_fetch_token, mock_ws_connect, a
     mock_websocket.send.assert_any_call('{"type": "connection_init"}')
 
 @patch("websockets.connect")
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_validate_grid_reward_connection_error(mock_fetch_token, mock_ws_connect, api):
     mock_fetch_token.return_value = "test_token"
     mock_ws_connect.side_effect = websockets.exceptions.WebSocketException("Connection failed")
@@ -98,7 +99,7 @@ async def test_validate_grid_reward_connection_error(mock_fetch_token, mock_ws_c
     with pytest.raises(TibberConnectionError):
         await api.validate_grid_reward("home1")
 
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_set_departure_time_success(mock_fetch_token, api):
     mock_fetch_token.return_value = "test_token"
     mock_response = MagicMock()
@@ -108,7 +109,7 @@ async def test_set_departure_time_success(mock_fetch_token, api):
     await api.set_departure_time("home1", "vehicle1", "monday", "08:00")
     api._client.post.assert_called_once()
 
-@patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
+@patch("client.TibberAPI.fetch_token", new_callable=AsyncMock)
 async def test_set_departure_time_connection_error(mock_fetch_token, api):
     mock_fetch_token.return_value = "test_token"
     api._client.post.side_effect = httpx.HTTPStatusError(
