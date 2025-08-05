@@ -25,14 +25,8 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - uses: "actions/checkout@v4"
-      - name: Set up Python
-        uses: "actions/setup-python@v5"
-        with:
-          python-version: "3.11"
       - name: Run hassfest
-        run: |
-          pip install homeassistant
-          python -m homeassistant.scripts.hassfest -p custom_components/tibber_grid_reward
+        uses: "home-assistant/actions/hassfest@master"
 
   tests:
     name: Tests
@@ -45,7 +39,9 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: |
-          pip install -r custom_components/tibber_grid_reward/requirements.txt
-          pip install pytest httpx
+          pip install -r requirements.txt
+          pip install -r requirements_test.txt
+          pip install -r requirements_dev.txt
       - name: Run tests
-        run: pytest custom_components/tibber_grid_reward/tests
+        working-directory: ./custom_components/tibber_grid_reward
+        run: pytest tests
