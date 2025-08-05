@@ -1,0 +1,31 @@
+set_departure_time:
+  name: Set Departure Time
+  description: Sets the smart charging departure time for a vehicle.
+  fields:
+    device_id:
+      name: Device
+      description: The vehicle to set the departure time for.
+      required: true
+      selector:
+        device:
+          integration: tibber_grid_reward
+    day:
+      name: Day
+      description: The day of the week to set the departure time for.
+      required: true
+      selector:
+        select:
+          options:
+            - "monday"
+            - "tuesday"
+            - "wednesday"
+            - "thursday"
+            - "friday"
+            - "saturday"
+            - "sunday"
+    time:
+      name: Time
+      description: The departure time in HH:MM format. Set to empty to disable.
+      required: false
+      selector:
+        time:

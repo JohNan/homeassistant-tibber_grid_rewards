@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tibber Grid Rewards",
+        "data": {
+          "username": "Användarnamn (e-post)",
+          "password": "Lösenord"
+        }
+      },
+      "select_home": {
+        "title": "Välj hem",
+        "data": {
+          "home_id": "Hem"
+        }
+      },
+      "select_devices": {
+        "title": "Välj enheter",
+        "data": {
+          "flex_devices": "Enheter"
+        }
+      }
+    },
+    "error": {
+      "auth": "Ogiltiga inloggningsuppgifter.",
+      "unknown": "Ett okänt fel inträffade."
+    },
+    "abort": {
+      "no_homes": "Inga hem hittades på ditt Tibber-konto.",
+      "no_grid_rewards": "Det valda hemmet har inte Grid Rewards aktiverat.",
+      "no_flex_device": "Ett hem med Grid Rewards hittades, men ingen kompatibel bil eller batteri är associerat med det.",
+      "duplicate": "En konfiguration för detta användarnamn finns redan.",
+      "unknown": "Ett okänt fel inträffade."
+    }
+  },
+  "progress": {
+    "validating": "Validerar status för Grid Rewards..."
+  }
+}
