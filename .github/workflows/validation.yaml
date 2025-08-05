@@ -18,13 +18,34 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "integration"
+          ignore: "brands"
 
-  hass:
-    name: Home Assistant
+  hassfest:
+    name: Hassfest
     runs-on: "ubuntu-latest"
     steps:
       - uses: "actions/checkout@v4"
-      - name: Home Assistant validation
-        uses: "home-assistant/actions/hass-action@main"
+      - name: Set up Python
+        uses: "actions/setup-python@v5"
         with:
-          path: "./custom_components/tibber_grid_reward"
+          python-version: "3.11"
+      - name: Run hassfest
+        run: |
+          pip install homeassistant
+          python -m homeassistant.scripts.hassfest -p custom_components/tibber_grid_reward
+
+  tests:
+    name: Tests
+    runs-on: "ubuntu-latest"
+    steps:
+      - uses: "actions/checkout@v4"
+      - name: Set up Python
+        uses: "actions/setup-python@v5"
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r custom_components/tibber_grid_reward/requirements.txt
+          pip install pytest httpx
+      - name: Run tests
+        run: pytest custom_components/tibber_grid_reward/tests
