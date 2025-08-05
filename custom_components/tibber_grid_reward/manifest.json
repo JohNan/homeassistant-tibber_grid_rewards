@@ -8,8 +8,5 @@
   "codeowners": ["@JohNan"],
   "version": "1.0.0",
   "iot_class": "cloud_polling",
-  "integration_type": "service",
-  "device_action": {
-    "domain": "time"
-  }
+  "integration_type": "service"
 }
