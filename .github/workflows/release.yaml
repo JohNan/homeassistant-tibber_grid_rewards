@@ -14,6 +14,8 @@ jobs:
       - name: Get version
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: "Update manifest.json"
+        run: python scripts/update_manifest.py ${{ steps.get_version.outputs.version }}
       - name: "Create zip file"
         run: |
           cd custom_components/tibber_grid_reward
