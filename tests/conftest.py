@@ -1,6 +1,8 @@
-"""Global fixtures for integration tests."""
-# Fixtures allow you to replace functions with a Mock object. You can perform
-# many operations on a Mock tests. For more information see
-# https://docs.python.org/3/library/unittest.mock.html
+"""pytest fixtures."""
+import pytest
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(enable_custom_integrations):
+    """Enable custom integrations defined in the test dir."""
+    yield
