@@ -1,0 +1,24 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Get version
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: "Create zip file"
+        run: |
+          cd custom_components/tibber_grid_reward
+          zip tibber_grid_reward.zip -r .
+      - name: "Upload zip to release"
+        uses: softprops/action-gh-release@v1
+        with:
+          files: custom_components/tibber_grid_reward/tibber_grid_reward.zip
