@@ -70,7 +70,7 @@ class TibberAPI:
         _LOGGER.debug("Fetching Tibber homes.")
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
-        query = "{ me { homes { id } } }"
+        query = "{ me { homes { id title } } }"
         try:
             response = await self._client.post(GRAPHQL_URL, headers=headers, json={"query": query})
             response.raise_for_status()
