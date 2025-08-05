@@ -5,7 +5,7 @@
   "documentation": "https://github.com/gemini/tibber-grid-reward",
   "issue_tracker": "https://github.com/gemini/tibber-grid-reward/issues",
   "requirements": [],
-  "codeowners": ["@Gemini"],
+  "codeowners": ["@JohNan"],
   "version": "1.0.0",
   "iot_class": "cloud_polling",
   "integration_type": "service",
