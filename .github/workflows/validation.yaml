@@ -43,5 +43,4 @@ jobs:
           pip install -r requirements_test.txt
           pip install -r requirements_dev.txt
       - name: Run tests
-        working-directory: ./custom_components/tibber_grid_reward
-        run: pytest tests
+        run: pytest
