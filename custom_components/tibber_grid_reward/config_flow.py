@@ -3,10 +3,8 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.httpx_client import get_async_client
 import homeassistant.helpers.config_validation as cv
-from homeassistant.util.ssl import client_context_no_verify
 
-from pytibbergridrewards import TibberAPI, TibberAuthError, TibberConnectionError
-
+from .client import TibberAPI, TibberAuthError, TibberConnectionError
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,8 +79,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("Starting grid reward validation.")
         try:
             client = get_async_client(self.hass)
-            ssl_context = client_context_no_verify()
-            api = TibberAPI(self.data["username"], self.data["password"], client, ssl_context)
+            api = TibberAPI(self.data["username"], self.data["password"], client)
             grid_reward_data = await api.validate_grid_reward(self.data["home_id"])
             _LOGGER.debug("Grid reward validation successful.")
 
@@ -133,4 +130,17 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({
                 vol.Required("flex_devices"): cv.multi_select(device_names)
             }),
+        )
+
+    async def async_step_reauth(self, user_input=None):
+        return await self.async_step_user()
+
+    @staticmethod
+    @config_entries.HANDLERS.register("reconfigure")
+    async def async_step_reconfigure(hass, config_entry):
+        """Handle a reconfiguration flow."""
+        return await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_REAUTH, "entry_id": config_entry.entry_id},
+            data=config_entry.data,
         )
