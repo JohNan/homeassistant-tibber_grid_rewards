@@ -1,4 +1,8 @@
+pyyaml
+websockets
+pyjwt
+httpx
+ruff
 pytest
 pytest-asyncio
-httpx
 pytest-homeassistant-custom-component
