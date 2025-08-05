@@ -1,12 +1,12 @@
 {
   "domain": "tibber_grid_reward",
   "name": "Tibber Grid Reward",
+  "codeowners": ["@JohNan"],
   "config_flow": true,
   "documentation": "https://github.com/gemini/tibber-grid-reward",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/gemini/tibber-grid-reward/issues",
   "requirements": [],
-  "codeowners": ["@JohNan"],
-  "version": "1.0.0",
-  "iot_class": "cloud_polling",
-  "integration_type": "service"
+  "version": "1.0.0"
 }
