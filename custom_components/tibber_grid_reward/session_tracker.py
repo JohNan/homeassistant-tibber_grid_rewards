@@ -23,6 +23,7 @@ class RewardSessionTracker:
             "active_session": None,
             "completed_sessions": [],
         }
+        self._current_daily_reward = 0.0
 
     async def async_load(self):
         """Load data from store."""
@@ -32,6 +33,7 @@ class RewardSessionTracker:
 
     def update_state(self, new_state: str, current_daily_reward: float):
         """Update the session state."""
+        self._current_daily_reward = current_daily_reward
         active_session = self._data.get("active_session")
         is_delivering = new_state == "GridRewardDelivering"
 
@@ -68,3 +70,13 @@ class RewardSessionTracker:
         if self._data["completed_sessions"]:
             return self._data["completed_sessions"][-1]
         return None
+
+    @property
+    def current_session_reward(self) -> float:
+        """Return the reward for the current active session."""
+        active_session = self._data.get("active_session")
+        if not active_session:
+            return 0.0
+        
+        reward = self._current_daily_reward - active_session["reward_at_start"]
+        return round(reward, 4)

@@ -20,6 +20,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         GridRewardCurrentMonthSensor(api, config_entry.entry_id),
         GridRewardCurrentDaySensor(api, config_entry.entry_id, daily_tracker),
         LastRewardSessionSensor(api, config_entry.entry_id, session_tracker),
+        CurrentRewardSessionSensor(api, config_entry.entry_id, session_tracker),
     ]
 
     for device in flex_devices:
@@ -161,6 +162,33 @@ class LastRewardSessionSensor(GridRewardSensor):
             }
         return {}
 
+class CurrentRewardSessionSensor(GridRewardSensor):
+    """Representation of the current reward session sensor."""
+
+    def __init__(self, api, entry_id, session_tracker):
+        """Initialize the sensor."""
+        super().__init__(api, entry_id)
+        self._session_tracker = session_tracker
+
+    @property
+    def unique_id(self):
+        return f"{self._entry_id}_current_reward_session"
+
+    @property
+    def name(self):
+        return "Current Reward Session"
+
+    @property
+    def state(self):
+        return self._session_tracker.current_session_reward
+
+    @property
+    def unit_of_measurement(self):
+        return self._attributes.get("rewardCurrency")
+
+    @property
+    def device_class(self):
+        return SensorDeviceClass.MONETARY
 
 class FlexDeviceSensor(SensorEntity):
     """Base class for Flex Device sensors."""
