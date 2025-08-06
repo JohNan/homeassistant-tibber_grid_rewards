@@ -2,6 +2,8 @@
 
 This is a custom integration for Home Assistant that allows you to monitor and interact with the Tibber Grid Reward program.
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=JohNan&repository=homeassistant-tibber_grid_rewards&category=integration)
+
 ## Features
 
 - **Grid Reward Sensors**: Provides sensors for the current state of the grid reward, the reason for the current state, and the earnings for the current day and month.
@@ -11,9 +13,18 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 
 ## Installation
 
-1. Copy the `tibber_grid_reward` directory to your Home Assistant `custom_components` directory.
-2. Restart Home Assistant.
-3. Add the "Tibber Grid Reward" integration from the Home Assistant UI.
+### HACS (Recommended)
+
+1.  Add this repository as a custom repository in HACS.
+2.  Search for "Tibber Grid Reward" in HACS and install it.
+3.  Restart Home Assistant.
+4.  Add the "Tibber Grid Reward" integration from the Home Assistant UI.
+
+### Manual Installation
+
+1.  Copy the `tibber_grid_reward` directory to your Home Assistant `custom_components` directory.
+2.  Restart Home Assistant.
+3.  Add the "Tibber Grid Reward" integration from the Home Assistant UI.
 
 ## Configuration
 
