@@ -1,11 +1,10 @@
-
 from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import httpx
 import websockets
 import pytest
 
-from custom_components.tibber_grid_reward.client import TibberAPI, TibberAuthError, TibberException, TibberConnectionError
+from custom_components.tibber_grid_reward.client import TibberAPI, TibberAuthError, TibberException, TibberConnectionError, GRAPHQL_WS_URL
 
 @pytest.fixture
 def api():
@@ -71,10 +70,13 @@ async def test_get_homes_connection_error(mock_fetch_token, api):
     with pytest.raises(TibberConnectionError):
         await api.get_homes()
 
+@patch("custom_components.tibber_grid_reward.client.TibberAPI._get_ssl_context", new_callable=AsyncMock)
 @patch("websockets.connect")
 @patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
-async def test_validate_grid_reward_success(mock_fetch_token, mock_ws_connect, api):
+async def test_validate_grid_reward_success(mock_fetch_token, mock_ws_connect, mock_get_ssl_context, api):
     mock_fetch_token.return_value = "test_token"
+    mock_ssl_context = MagicMock()
+    mock_get_ssl_context.return_value = mock_ssl_context
     mock_websocket = AsyncMock()
     mock_ws_connect.return_value.__aenter__.return_value = mock_websocket
     
@@ -89,11 +91,20 @@ async def test_validate_grid_reward_success(mock_fetch_token, mock_ws_connect, a
     result = await api.validate_grid_reward("home1")
     assert result == {"status": "ok"}
     mock_websocket.send.assert_any_call('{"type": "connection_init"}')
+    mock_ws_connect.assert_called_once_with(
+        GRAPHQL_WS_URL,
+        additional_headers={"Authorization": "Bearer test_token"},
+        subprotocols=["graphql-transport-ws"],
+        ssl=mock_ssl_context,
+    )
 
+
+@patch("custom_components.tibber_grid_reward.client.TibberAPI._get_ssl_context", new_callable=AsyncMock)
 @patch("websockets.connect")
 @patch("custom_components.tibber_grid_reward.client.TibberAPI.fetch_token", new_callable=AsyncMock)
-async def test_validate_grid_reward_connection_error(mock_fetch_token, mock_ws_connect, api):
+async def test_validate_grid_reward_connection_error(mock_fetch_token, mock_ws_connect, mock_get_ssl_context, api):
     mock_fetch_token.return_value = "test_token"
+    mock_get_ssl_context.return_value = MagicMock()
     mock_ws_connect.side_effect = websockets.exceptions.WebSocketException("Connection failed")
 
     with pytest.raises(TibberConnectionError):
