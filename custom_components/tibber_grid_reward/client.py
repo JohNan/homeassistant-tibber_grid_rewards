@@ -6,6 +6,7 @@ import websockets
 import httpx
 import json
 import uuid
+import ssl
 from typing import Callable, Any, List, Dict
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,6 +36,11 @@ class TibberAPI:
         self._sub_callback: Callable[[Dict[str, Any]], None] | None = None
         self._vehicle_callbacks: Dict[str, Callable[[Dict[str, Any]], None]] = {}
         self.home_id: str | None = None
+
+    async def _get_ssl_context(self) -> ssl.SSLContext:
+        """Get SSL context in a thread-safe way."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, ssl.create_default_context)
 
     async def close_websocket(self) -> None:
         self._ws_reconnect = False
@@ -87,10 +93,12 @@ class TibberAPI:
         headers = {"Authorization": f"Bearer {token}"}
         
         try:
+            ssl_context = await self._get_ssl_context()
             async with websockets.connect(
                 GRAPHQL_WS_URL,
                 additional_headers=headers,
                 subprotocols=["graphql-transport-ws"],
+                ssl=ssl_context,
             ) as websocket:
                 await websocket.send(json.dumps({"type": "connection_init"}))
                 msg = await asyncio.wait_for(websocket.recv(), timeout=10)
@@ -126,10 +134,12 @@ class TibberAPI:
                 try:
                     token = await self.fetch_token()
                     headers = {"Authorization": f"Bearer {token}"}
+                    ssl_context = await self._get_ssl_context()
                     async with websockets.connect(
                         GRAPHQL_WS_URL,
                         additional_headers=headers,
                         subprotocols=["graphql-transport-ws"],
+                        ssl=ssl_context,
                     ) as websocket:
                         self._websocket = websocket
                         await websocket.send(json.dumps({"type": "connection_init"}))
@@ -177,10 +187,12 @@ class TibberAPI:
                 try:
                     token = await self.fetch_token()
                     headers = {"Authorization": f"Bearer {token}"}
+                    ssl_context = await self._get_ssl_context()
                     async with websockets.connect(
                         GRAPHQL_WS_URL,
                         additional_headers=headers,
                         subprotocols=["graphql-transport-ws"],
+                        ssl=ssl_context,
                     ) as websocket:
                         self._websocket = websocket
                         await websocket.send(json.dumps({"type": "connection_init"}))
