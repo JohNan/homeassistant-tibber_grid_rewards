@@ -145,6 +145,10 @@ class LastRewardSessionSensor(GridRewardSensor):
         return None
 
     @property
+    def device_class(self):
+        return SensorDeviceClass.TIMESTAMP
+
+    @property
     def extra_state_attributes(self):
         last_session = self._session_tracker.last_session
         if last_session:
