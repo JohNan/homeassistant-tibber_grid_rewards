@@ -5,6 +5,7 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 ## Features
 
 - **Grid Reward Sensors**: Provides sensors for the current state of the grid reward, the reason for the current state, and the earnings for the current day and month.
+- **Live Session Reward**: A sensor that shows the live, accumulating reward amount during an active grid reward session.
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 
@@ -30,3 +31,6 @@ Sets the departure time for a vehicle.
 | `day`        | The day of the week (e.g., "monday").       |
 | `time`       | The departure time in "HH:MM" format.       |
 
+## Disclaimer
+
+This integration is not developed, endorsed, or supported by Tibber. It is an unofficial, community-developed project.
