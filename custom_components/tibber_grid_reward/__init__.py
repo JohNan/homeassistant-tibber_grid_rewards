@@ -29,7 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     )
 
     daily_tracker = DailyRewardTracker(hass)
-    await daily_tracker.async_load()
+    await daily_tracker.async_setup()
 
     session_tracker = RewardSessionTracker(hass)
     await session_tracker.async_load()
