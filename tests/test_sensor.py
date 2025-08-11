@@ -8,6 +8,7 @@ from custom_components.tibber_grid_reward.sensor import (
     GridRewardCurrentDaySensor,
     FlexDeviceStateSensor,
     FlexDeviceConnectivitySensor,
+    VehicleBatterySensor,
 )
 
 @pytest.fixture
@@ -82,4 +83,16 @@ def test_flex_device_connectivity_sensor(mock_api, entry_id):
     assert sensor.unique_id == "vehicle1_connectivity"
     sensor.update_data({"flexDevices": [{"vehicleId": "vehicle1", "isPluggedIn": True}]})
     assert sensor.state == "Plugged In"
+    sensor.async_write_ha_state.assert_called_once()
+
+def test_vehicle_battery_sensor(mock_api, entry_id):
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    sensor = VehicleBatterySensor(mock_api, entry_id, device)
+    sensor.async_write_ha_state = MagicMock()
+    assert sensor.name == "My Car Battery"
+    assert sensor.unique_id == "vehicle1_battery"
+    sensor.update_data({"battery": {"percent": 80}})
+    assert sensor.state == 80
+    assert sensor.unit_of_measurement == "%"
+    assert sensor.device_class == SensorDeviceClass.BATTERY
     sensor.async_write_ha_state.assert_called_once()

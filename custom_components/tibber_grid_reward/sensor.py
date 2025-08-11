@@ -14,7 +14,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     daily_tracker = entry_data["daily_tracker"]
     session_tracker = entry_data["session_tracker"]
 
-    sensors = [
+    grid_reward_sensors = [
         GridRewardStateSensor(api, config_entry.entry_id),
         GridRewardReasonSensor(api, config_entry.entry_id),
         GridRewardCurrentMonthSensor(api, config_entry.entry_id),
@@ -22,13 +22,25 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         LastRewardSessionSensor(api, config_entry.entry_id, session_tracker),
         CurrentRewardSessionSensor(api, config_entry.entry_id, session_tracker),
     ]
+    entry_data["grid_reward_devices"].extend(grid_reward_sensors)
+    async_add_entities(grid_reward_sensors)
 
     for device in flex_devices:
-        sensors.append(FlexDeviceStateSensor(api, config_entry.entry_id, device))
-        sensors.append(FlexDeviceConnectivitySensor(api, config_entry.entry_id, device))
+        if device["type"] == "vehicle":
+            vehicle_sensors = [
+                VehicleBatterySensor(api, config_entry.entry_id, device),
+            ]
+            entry_data["vehicle_devices"][device["id"]].extend(vehicle_sensors)
+            async_add_entities(vehicle_sensors)
 
-    hass.data[DOMAIN][config_entry.entry_id]["grid_reward_devices"].extend(sensors)
-    async_add_entities(sensors)
+        # The FlexDevice sensors are updated from the grid reward subscription
+        flex_sensors = [
+            FlexDeviceStateSensor(api, config_entry.entry_id, device),
+            FlexDeviceConnectivitySensor(api, config_entry.entry_id, device),
+        ]
+        entry_data["grid_reward_devices"].extend(flex_sensors)
+        async_add_entities(flex_sensors)
+
 
 class GridRewardSensor(SensorEntity):
     """Base class for Tibber Grid Reward sensors."""
@@ -250,3 +262,45 @@ class FlexDeviceConnectivitySensor(FlexDeviceSensor):
         if self._device_type == "vehicle":
             return "mdi:car-electric" if self.state == "Plugged In" else "mdi:car-electric-outline"
         return "mdi:battery"
+
+class VehicleSensor(SensorEntity):
+    """Base class for Vehicle sensors."""
+    def __init__(self, api, entry_id, device):
+        self._api = api
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attributes = {}
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    @callback
+    def update_data(self, data):
+        _LOGGER.debug("Updating vehicle sensor %s with data: %s", self.unique_id, data)
+        self._attributes = data
+        self.async_write_ha_state()
+
+class VehicleBatterySensor(VehicleSensor):
+    """Representation of a Vehicle Battery Sensor."""
+    @property
+    def unique_id(self):
+        return f"{self._device_id}_battery"
+    @property
+    def name(self):
+        return f"{self._device_name} Battery"
+    @property
+    def state(self):
+        return self._attributes.get("battery", {}).get("percent")
+    @property
+    def device_class(self):
+        return SensorDeviceClass.BATTERY
+    @property
+    def unit_of_measurement(self):
+        return "%"
