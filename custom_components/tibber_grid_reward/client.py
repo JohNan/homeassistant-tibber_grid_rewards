@@ -315,6 +315,9 @@ class TibberAPI:
                     __typename
                     ...setting
                   }
+                  battery {
+                    percent
+                  }
                 }
                 """
             }

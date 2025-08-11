@@ -9,6 +9,7 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 - **Grid Reward Sensors**: Provides sensors for the current state of the grid reward, the reason for the current state, and the earnings for the current day and month.
 - **Live Session Reward**: A sensor that shows the live, accumulating reward amount during an active grid reward session.
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
+- **Vehicle Battery Sensor**: A sensor that shows the battery percentage for your electric vehicles.
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 
 ## Installation
