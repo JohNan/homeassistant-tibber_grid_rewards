@@ -7,12 +7,11 @@ from homeassistant.helpers import device_registry as dr
 
 from .client import TibberAPI
 from .const import DOMAIN
+import logging
 from .daily_tracker import DailyRewardTracker
 from .session_tracker import RewardSessionTracker
 
 PLATFORMS = ["sensor", "time", "binary_sensor"]
-
-import logging
 
 _LOGGER = logging.getLogger(__name__)
 
