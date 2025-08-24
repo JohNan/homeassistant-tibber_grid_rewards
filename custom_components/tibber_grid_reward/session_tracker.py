@@ -1,6 +1,5 @@
 """Reward session tracker for Tibber Grid Reward."""
 import logging
-from datetime import datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store

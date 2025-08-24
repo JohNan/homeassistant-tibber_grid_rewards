@@ -1,11 +1,9 @@
 """Daily reward tracker for Tibber Grid Reward."""
 import logging
-from datetime import date
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
-from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 

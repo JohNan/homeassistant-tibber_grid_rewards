@@ -27,7 +27,7 @@ def entry_id():
     "description",
     GRID_REWARD_SENSORS,
 )
-def test_grid_reward_sensors(mock_api, entry_id, description):
+async def test_grid_reward_sensors(mock_api, entry_id, description):
     """Test the GridRewardSensor."""
     sensor = GridRewardSensor(mock_api, entry_id, description)
     sensor.async_write_ha_state = MagicMock()
@@ -59,7 +59,7 @@ def test_grid_reward_sensors(mock_api, entry_id, description):
     sensor.async_write_ha_state.assert_called_once()
 
 
-def test_grid_reward_current_day_sensor(mock_api, entry_id):
+async def test_grid_reward_current_day_sensor(mock_api, entry_id):
     """Test the GridRewardCurrentDaySensor."""
     mock_tracker = MagicMock()
     mock_tracker.daily_reward = 10.5
@@ -82,7 +82,7 @@ def test_grid_reward_current_day_sensor(mock_api, entry_id):
     "description",
     [d for d in GRID_REWARD_SENSORS if d.key in ("last_reward_session", "current_reward_session")],
 )
-def test_reward_session_sensor(mock_api, entry_id, description):
+async def test_reward_session_sensor(mock_api, entry_id, description):
     """Test the RewardSessionSensor."""
     mock_session_tracker = MagicMock()
     mock_session_tracker.last_session = {
@@ -113,7 +113,7 @@ def test_reward_session_sensor(mock_api, entry_id, description):
 
 
 @pytest.mark.parametrize("description", FLEX_DEVICE_SENSORS)
-def test_flex_device_sensor(mock_api, entry_id, description):
+async def test_flex_device_sensor(mock_api, entry_id, description):
     """Test the FlexDeviceSensor."""
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
     sensor = FlexDeviceSensor(mock_api, entry_id, device, description)
