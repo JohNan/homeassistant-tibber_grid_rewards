@@ -6,6 +6,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
 )
 from homeassistant.core import callback
+from homeassistant.util import dt as dt_util
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -171,7 +172,7 @@ class RewardSessionSensor(GridRewardSensor):
                     "reward": last_session["reward"],
                     "currency": data.get("rewardCurrency"),
                 }
-                return last_session["end_time"]
+                return dt_util.parse_datetime(last_session["end_time"])
             return None
         if self.entity_description.key == "current_reward_session":
             self._attr_native_unit_of_measurement = data.get("rewardCurrency")
