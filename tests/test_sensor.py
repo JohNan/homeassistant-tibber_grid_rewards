@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.tibber_grid_reward.sensor import (
     GridRewardSensor,
@@ -103,7 +104,7 @@ async def test_reward_session_sensor(mock_api, entry_id, description):
     state = sensor._get_state(data)
 
     if description.key == "last_reward_session":
-        assert state == "2023-01-01T13:00:00+00:00"
+        assert state == dt_util.parse_datetime("2023-01-01T13:00:00+00:00")
         assert sensor.extra_state_attributes["reward"] == 1.23
     elif description.key == "current_reward_session":
         assert state == 0.5
