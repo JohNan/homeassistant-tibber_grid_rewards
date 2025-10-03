@@ -69,10 +69,13 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             self.data["username"] = user_input["username"]
             self.data["password"] = user_input["password"]
-            
+            self.data["api_key"] = user_input["api_key"]
+
             try:
-                _LOGGER.debug("Attempting to fetch homes.")
+                _LOGGER.debug("Attempting to fetch homes and validate credentials.")
                 client = get_async_client(self.hass)
+
+                # Validate username/password for private API
                 api = TibberAPI(self.data["username"], self.data["password"], client)
                 homes_data = await api.get_homes()
                 _LOGGER.debug("Successfully fetched homes.")
@@ -81,14 +84,22 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.warning("No homes found on Tibber account.")
                     return self.async_abort(reason="no_homes")
 
+                # Validate API key for public API
+                public_api = TibberPublicAPI(self.data["api_key"], client)
+                await public_api.get_homes()
+                _LOGGER.debug("Successfully validated API key.")
+
                 self.homes = {home["id"]: home["title"] for home in homes_data}
                 return await self.async_step_select_home()
 
             except TibberAuthError:
-                _LOGGER.warning("Authentication failed.")
+                _LOGGER.warning("Authentication failed for private API.")
                 errors["base"] = "auth"
-            except TibberConnectionError:
-                _LOGGER.error("Connection error while fetching homes.")
+            except TibberPublicAuthError:
+                _LOGGER.warning("Authentication failed for public API.")
+                errors["base"] = "invalid_auth"
+            except (TibberConnectionError, TibberPublicException):
+                _LOGGER.error("Connection error during validation.")
                 errors["base"] = "unknown"
             except Exception:
                 _LOGGER.exception("Unexpected exception in user step")
@@ -96,7 +107,11 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required("username"): str, vol.Required("password"): str}),
+            data_schema=vol.Schema({
+                vol.Required("username"): str,
+                vol.Required("password"): str,
+                vol.Required("api_key"): str,
+            }),
             errors=errors,
         )
 
@@ -188,14 +203,8 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(self, user_input=None):
-        return await self.async_step_user()
+        return await self.async_step_user(user_input)
 
-    @staticmethod
-    @config_entries.HANDLERS.register("reconfigure")
-    async def async_step_reconfigure(hass, config_entry):
+    async def async_step_reconfigure(self, user_input=None):
         """Handle a reconfiguration flow."""
-        return await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH, "entry_id": config_entry.entry_id},
-            data=config_entry.data,
-        )
+        return await self.async_step_reauth(user_input)
