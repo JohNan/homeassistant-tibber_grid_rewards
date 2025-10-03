@@ -83,31 +83,35 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             )
         )
 
+    grid_reward_sensors = []
     for description in GRID_REWARD_SENSORS:
         if description.key == "grid_reward_current_day":
-            sensors.append(
+            grid_reward_sensors.append(
                 GridRewardCurrentDaySensor(
                     api, config_entry.entry_id, daily_tracker, description
                 )
             )
         elif description.key in ("last_reward_session", "current_reward_session"):
-            sensors.append(
+            grid_reward_sensors.append(
                 RewardSessionSensor(
                     api, config_entry.entry_id, session_tracker, description
                 )
             )
         else:
-            sensors.append(
+            grid_reward_sensors.append(
                 GridRewardSensor(api, config_entry.entry_id, description)
             )
 
     for device in flex_devices:
         for description in FLEX_DEVICE_SENSORS:
-            sensors.append(
+            grid_reward_sensors.append(
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
             )
 
-    hass.data[DOMAIN][config_entry.entry_id]["grid_reward_devices"].extend(sensors)
+    hass.data[DOMAIN][config_entry.entry_id]["grid_reward_devices"].extend(
+        grid_reward_sensors
+    )
+    sensors.extend(grid_reward_sensors)
     async_add_entities(sensors)
 
 
