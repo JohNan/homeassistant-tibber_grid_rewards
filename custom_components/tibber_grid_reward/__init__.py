@@ -52,9 +52,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, api.subscribe_grid_reward(entry.data["home_id"]), "tibber-grid-reward-subscription"
     )
 
+    api_key = entry.data.get("api_key") or entry.options.get("api_key")
     public_api = None
-    if entry.options.get("api_key"):
-        public_api = TibberPublicAPI(entry.options["api_key"], client)
+    if api_key:
+        public_api = TibberPublicAPI(api_key, client)
 
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
