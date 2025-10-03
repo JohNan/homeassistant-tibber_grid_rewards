@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Any, Coroutine
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.helpers.httpx_client import get_async_client
