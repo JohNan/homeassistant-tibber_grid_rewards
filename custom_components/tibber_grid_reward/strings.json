@@ -1,36 +1,60 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "Tibber Grid Reward",
-        "data": {
-          "username": "Username (email)",
-          "password": "Password"
+    "config": {
+        "step": {
+            "user": {
+                "title": "Tibber Grid Reward",
+                "data": {
+                    "username": "Username (email)",
+                    "password": "Password",
+                    "api_key": "API Key"
+                }
+            },
+            "reconfigure": {
+                "title": "Reconfigure Tibber Grid Reward",
+                "description": "Update your credentials for {username}. The password is not pre-filled for security reasons.",
+                "data": {
+                    "password": "New Password",
+                    "api_key": "API Key"
+                }
+            },
+            "select_home": {
+                "title": "Select Home",
+                "data": {
+                    "home_id": "Home"
+                }
+            },
+            "select_devices": {
+                "title": "Select Devices",
+                "data": {
+                    "flex_devices": "Devices"
+                }
+            }
+        },
+        "error": {
+            "auth": "Invalid authentication credentials.",
+            "invalid_auth": "Invalid API key.",
+            "unknown": "An unknown error occurred."
+        },
+        "abort": {
+            "no_homes": "No homes found on your Tibber account.",
+            "no_grid_rewards": "The selected home does not have the grid reward feature activated.",
+            "no_flex_device": "A home with grid rewards was found, but no compatible vehicle or battery is associated with it.",
+            "already_configured": "An entry for this username already exists.",
+            "reconfigure_successful": "The integration has been reconfigured successfully.",
+            "unknown": "An unknown error occurred."
         }
-      },
-      "select_home": {
-        "title": "Select Home",
-        "data": {
-          "home_id": "Home"
-        }
-      },
-      "select_devices": {
-        "title": "Select Devices",
-        "data": {
-          "flex_devices": "Devices"
-        }
-      }
     },
-    "error": {
-      "auth": "Invalid authentication credentials.",
-      "unknown": "An unknown error occurred."
-    },
-    "abort": {
-      "no_homes": "No homes found on your Tibber account.",
-      "no_grid_rewards": "The selected home does not have the grid reward feature activated.",
-      "no_flex_device": "A home with grid rewards was found, but no compatible vehicle or battery is associated with it.",
-      "duplicate": "An entry for this username already exists.",
-      "unknown": "An unknown error occurred."
+    "options": {
+        "step": {
+            "init": {
+                "title": "Tibber Grid Reward Options",
+                "data": {
+                    "api_key": "API Key"
+                }
+            }
+        },
+        "error": {
+            "invalid_auth": "Invalid API key."
+        }
     }
-  }
 }
