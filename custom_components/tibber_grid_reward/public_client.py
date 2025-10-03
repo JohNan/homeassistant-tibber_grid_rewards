@@ -1,4 +1,3 @@
-import json
 import logging
 import httpx
 from typing import Any, Dict, List
@@ -25,20 +24,25 @@ class TibberPublicAPI:
         self._client = client
         self.headers = {
             "Authorization": f"Bearer {self._token}",
-            "Content-Type": "application/json",
         }
 
     async def get_homes(self) -> List[Dict[str, Any]]:
         """Fetch Tibber homes."""
         _LOGGER.debug("Fetching Tibber homes from public API.")
-        query = "{ viewer { homes { id title } } }"
+        query = "{ viewer { homes { id appNickname address { address1 } } } }"
+        payload = {"query": query}
         try:
             response = await self._client.post(
-                PUBLIC_API_URL, headers=self.headers, content=json.dumps({"query": query})
+                PUBLIC_API_URL, headers=self.headers, json=payload
             )
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched Tibber homes from public API.")
-            return response.json().get("data", {}).get("viewer", {}).get("homes", [])
+            homes = response.json().get("data", {}).get("viewer", {}).get("homes", [])
+            for home in homes:
+                home["title"] = home.get("appNickname") or (
+                    home.get("address") or {}
+                ).get("address1", home["id"])
+            return homes
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 _LOGGER.error("Authentication failed with public API.")
@@ -85,7 +89,7 @@ class TibberPublicAPI:
         payload = {"query": query, "variables": {"homeId": home_id}}
         try:
             response = await self._client.post(
-                PUBLIC_API_URL, headers=self.headers, content=json.dumps(payload)
+                PUBLIC_API_URL, headers=self.headers, json=payload
             )
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched price info from public API.")
