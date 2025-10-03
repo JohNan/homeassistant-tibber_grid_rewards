@@ -7,12 +7,53 @@ import homeassistant.helpers.config_validation as cv
 
 from .client import TibberAPI, TibberAuthError, TibberConnectionError
 from .const import DOMAIN
+from .public_client import TibberPublicAPI, TibberPublicAuthError, TibberPublicException
+from homeassistant.core import callback
 
 _LOGGER = logging.getLogger(__name__)
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle an options flow for Tibber Grid Reward."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Manage the options."""
+        errors = {}
+        if user_input is not None:
+            try:
+                token = user_input["api_key"]
+                client = get_async_client(self.hass)
+                public_api = TibberPublicAPI(token, client)
+
+                await public_api.get_homes()
+
+                return self.async_create_entry(title="", data=user_input)
+            except TibberPublicAuthError:
+                errors["base"] = "invalid_auth"
+            except (TibberPublicException, Exception):
+                _LOGGER.exception("Unexpected exception")
+                errors["base"] = "unknown"
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {vol.Optional("api_key", default=self.config_entry.options.get("api_key", "")): str}
+            ),
+            errors=errors,
+        )
 
 class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
     CONNECTION_CLASS = config_entries.CONN_CLASS_CLOUD_POLL
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):
+        """Get the options flow for this handler."""
+        return OptionsFlowHandler(config_entry)
 
     def __init__(self):
         self.data = {}

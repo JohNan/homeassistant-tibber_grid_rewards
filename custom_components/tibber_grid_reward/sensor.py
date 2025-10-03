@@ -8,8 +8,16 @@ from homeassistant.components.sensor import (
 from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 from .const import DOMAIN
+from .public_client import TibberPublicAPI
 
 _LOGGER = logging.getLogger(__name__)
+
+
+PRICE_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="current_price",
+    name="Current Price",
+    device_class=SensorDeviceClass.MONETARY,
+)
 
 
 GRID_REWARD_SENSORS: tuple[SensorEntityDescription, ...] = (
@@ -59,11 +67,22 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the sensor platform."""
     entry_data = hass.data[DOMAIN][config_entry.entry_id]
     api = entry_data["api"]
+    public_api = entry_data.get("public_api")
     flex_devices = entry_data["flex_devices"]
     daily_tracker = entry_data["daily_tracker"]
     session_tracker = entry_data["session_tracker"]
 
     sensors = []
+    if public_api:
+        sensors.append(
+            PriceSensor(
+                public_api,
+                config_entry.data["home_id"],
+                config_entry.entry_id,
+                PRICE_SENSOR_DESCRIPTION,
+            )
+        )
+
     for description in GRID_REWARD_SENSORS:
         if description.key == "grid_reward_current_day":
             sensors.append(
@@ -237,3 +256,40 @@ class FlexDeviceSensor(SensorEntity):
             self._attr_icon = "mdi:battery"
             return "Online"  # Placeholder for battery
         return None
+
+
+class PriceSensor(SensorEntity):
+    """Representation of a Tibber price sensor."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(self, public_api: TibberPublicAPI, home_id: str, entry_id: str, description: SensorEntityDescription):
+        """Initialize the sensor."""
+        self.entity_description = description
+        self._public_api = public_api
+        self._home_id = home_id
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{self._entry_id}_{description.key}"
+        self._attr_extra_state_attributes = {}
+
+    @property
+    def device_info(self):
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, self._entry_id)},
+            "name": "Tibber Grid Reward",
+            "manufacturer": "Tibber",
+        }
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        price_info = await self._public_api.get_price_info(self._home_id)
+        if price_info:
+            current_price = price_info.get("current")
+            if current_price:
+                self._attr_native_value = current_price.get("total")
+                # Note: The currency is not available in the priceInfo query from the public API
+                # in the same way as the private API. This will be addressed later if possible.
+
+            self._attr_extra_state_attributes["today"] = price_info.get("today")
+            self._attr_extra_state_attributes["tomorrow"] = price_info.get("tomorrow")
