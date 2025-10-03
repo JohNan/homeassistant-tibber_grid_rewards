@@ -188,14 +188,8 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_reauth(self, user_input=None):
-        return await self.async_step_user()
+        return await self.async_step_user(user_input)
 
-    @staticmethod
-    @config_entries.HANDLERS.register("reconfigure")
-    async def async_step_reconfigure(hass, config_entry):
+    async def async_step_reconfigure(self, user_input=None):
         """Handle a reconfiguration flow."""
-        return await hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": config_entries.SOURCE_REAUTH, "entry_id": config_entry.entry_id},
-            data=config_entry.data,
-        )
+        return await self.async_step_reauth(user_input)
