@@ -11,8 +11,9 @@
             },
             "reconfigure": {
                 "title": "Reconfigure Tibber Grid Reward",
-                "description": "Update your credentials for {username}. The password is not pre-filled for security reasons.",
+                "description": "The password is not pre-filled for security reasons.",
                 "data": {
+                    "username": "Username (email)",
                     "password": "New Password",
                     "api_key": "API Key"
                 }

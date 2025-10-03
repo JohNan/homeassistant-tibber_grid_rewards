@@ -241,11 +241,13 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reconfigure",
-            description_placeholders={
-                CONF_USERNAME: self.entry.data[CONF_USERNAME]
-            },
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_USERNAME, default=self.entry.data[CONF_USERNAME]
+                    ): vol.In(
+                        {self.entry.data[CONF_USERNAME]: self.entry.data[CONF_USERNAME]}
+                    ),
                     vol.Required(CONF_PASSWORD): str,
                     vol.Required(
                         CONF_API_KEY, default=self._get_current_api_key()
