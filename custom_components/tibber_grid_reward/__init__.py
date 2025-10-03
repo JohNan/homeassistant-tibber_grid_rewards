@@ -7,6 +7,7 @@ from homeassistant.helpers import device_registry as dr
 
 from .client import TibberAPI
 from .const import DOMAIN
+from .public_client import TibberPublicAPI
 import logging
 from .daily_tracker import DailyRewardTracker
 from .session_tracker import RewardSessionTracker
@@ -51,8 +52,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass, api.subscribe_grid_reward(entry.data["home_id"]), "tibber-grid-reward-subscription"
     )
 
+    public_api = None
+    if entry.options.get("api_key"):
+        public_api = TibberPublicAPI(entry.options["api_key"], client)
+
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
+        "public_api": public_api,
         "flex_devices": entry.data["flex_devices"],
         "grid_reward_devices": [],
         "vehicle_devices": {
@@ -61,6 +67,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         "daily_tracker": daily_tracker,
         "session_tracker": session_tracker,
     }
+
+    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     def create_vehicle_update_callback(device_id):
         """Create a callback for a specific vehicle."""
@@ -106,6 +114,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.services.async_register(DOMAIN, "set_departure_time", set_departure_time)
 
     return True
+
+
+async def update_listener(hass: HomeAssistant, entry: ConfigEntry):
+    """Handle options update."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
