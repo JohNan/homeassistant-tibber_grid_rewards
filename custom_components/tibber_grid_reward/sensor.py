@@ -267,7 +267,13 @@ class PriceSensor(SensorEntity):
 
     entity_description: SensorEntityDescription
 
-    def __init__(self, public_api: TibberPublicAPI, home_id: str, entry_id: str, description: SensorEntityDescription):
+    def __init__(
+        self,
+        public_api: TibberPublicAPI,
+        home_id: str,
+        entry_id: str,
+        description: SensorEntityDescription,
+    ):
         """Initialize the sensor."""
         self.entity_description = description
         self._public_api = public_api
@@ -288,12 +294,68 @@ class PriceSensor(SensorEntity):
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
         price_info = await self._public_api.get_price_info(self._home_id)
-        if price_info:
-            current_price = price_info.get("current")
-            if current_price:
-                self._attr_native_value = current_price.get("total")
-                # Note: The currency is not available in the priceInfo query from the public API
-                # in the same way as the private API. This will be addressed later if possible.
+        if not price_info:
+            return
 
-            self._attr_extra_state_attributes["today"] = price_info.get("today")
-            self._attr_extra_state_attributes["tomorrow"] = price_info.get("tomorrow")
+        current_price = price_info.get("current")
+        if current_price:
+            self._attr_native_value = current_price.get("total")
+            # Note: The currency is not available in the priceInfo query from the public API
+            # in the same way as the private API. This will be addressed later if possible.
+
+        now = dt_util.now()
+
+        today_prices_data = price_info.get("today", [])
+        tomorrow_prices_data = price_info.get("tomorrow", [])
+
+        all_prices_data = today_prices_data + tomorrow_prices_data
+        all_prices = [
+            p["total"] for p in all_prices_data if p.get("total") is not None
+        ]
+
+        def get_price_rating(price, prices):
+            if not prices or price is None:
+                return None
+
+            p_count = len(prices)
+            if p_count == 0 or len(set(prices)) == 1:
+                return "Normal"
+
+            lower_prices = sum(1 for p in prices if p < price)
+            percentile = lower_prices / p_count
+
+            if percentile < 0.33:
+                return "Low"
+            if percentile < 0.66:
+                return "Moderate"
+            return "High"
+
+        today_prices_total = [p.get("total") for p in today_prices_data]
+        tomorrow_prices_total = [p.get("total") for p in tomorrow_prices_data]
+
+        self._attr_extra_state_attributes = {
+            "last_update": now.isoformat(),
+            "today": ", ".join(map(str, today_prices_total)),
+            "today_raw": [
+                {
+                    "time": p.get("startsAt"),
+                    "price": p.get("total"),
+                    "rating": get_price_rating(p.get("total"), all_prices),
+                }
+                for p in today_prices_data
+            ],
+            "tomorrow": ", ".join(map(str, tomorrow_prices_total))
+            if tomorrow_prices_total
+            else None,
+            "tomorrow_raw": [
+                {
+                    "time": p.get("startsAt"),
+                    "price": p.get("total"),
+                    "rating": get_price_rating(p.get("total"), all_prices),
+                }
+                for p in tomorrow_prices_data
+            ]
+            if tomorrow_prices_data
+            else None,
+            "tomorrow_valid": bool(tomorrow_prices_data),
+        }
