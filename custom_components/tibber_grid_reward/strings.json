@@ -9,13 +9,18 @@
                     "api_key": "API Key"
                 }
             },
-            "reconfigure": {
-                "title": "Reconfigure Tibber Grid Reward",
-                "description": "The password is not pre-filled for security reasons.",
+            "reauth": {
+                "title": "Re-authenticate Tibber Account",
+                "description": "The Tibber Grid Reward integration needs to re-authenticate your account. Please enter your password and API key again.",
                 "data": {
-                    "username": "Username (email)",
-                    "password": "New Password",
+                    "password": "Password",
                     "api_key": "API Key"
+                }
+            },
+            "reconfigure": {
+                "title": "Update Flex Devices",
+                "data": {
+                    "flex_devices": "Select the devices to control"
                 }
             },
             "select_home": {
@@ -42,6 +47,7 @@
             "no_flex_device": "A home with grid rewards was found, but no compatible vehicle or battery is associated with it.",
             "already_configured": "An entry for this username already exists.",
             "reconfigure_successful": "The integration has been reconfigured successfully.",
+            "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
             "unknown": "An unknown error occurred."
         }
     },
