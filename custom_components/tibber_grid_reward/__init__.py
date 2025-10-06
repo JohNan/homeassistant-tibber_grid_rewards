@@ -1,11 +1,11 @@
 """The Tibber Grid Reward integration."""
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers import device_registry as dr
 
-from .client import TibberAPI
+from .client import TibberAPI, TibberAuthError
 from .const import DOMAIN
 from .public_client import TibberPublicAPI
 import logging
@@ -15,6 +15,7 @@ from .session_tracker import RewardSessionTracker
 PLATFORMS = ["sensor", "time", "binary_sensor"]
 
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Tibber Grid Reward from a config entry."""
@@ -27,6 +28,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         entry.data["password"],
         client,
     )
+
+    try:
+        await api.get_homes()  # Verify credentials
+    except TibberAuthError as e:
+        raise ConfigEntryAuthFailed from e
 
     daily_tracker = DailyRewardTracker(hass)
     await daily_tracker.async_setup()

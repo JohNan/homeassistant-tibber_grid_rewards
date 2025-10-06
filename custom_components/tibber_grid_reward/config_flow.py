@@ -218,29 +218,30 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
-    async def async_step_reauth(self, user_input=None):
-        return await self.async_step_reconfigure(user_input)
-
-    async def async_step_reconfigure(self, user_input=None) -> FlowResult:
-        """Handle a reconfiguration flow."""
+    async def async_step_reauth(self, user_input=None) -> FlowResult:
+        """Handle a reauthentication flow."""
         self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         errors = {}
 
         if user_input:
             self.data = {
-                CONF_USERNAME: self.entry.data[CONF_USERNAME],
+                **self.entry.data,
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
                 CONF_API_KEY: user_input[CONF_API_KEY],
             }
             try:
                 errors = await self._validate_credentials()
                 if not errors:
-                    return await self.async_step_select_home()
-            except NoHomesFound as e:
-                return self.async_abort(reason=e.reason)
+                    self.hass.config_entries.async_update_entry(
+                        self.entry, data=self.data
+                    )
+                    await self.hass.config_entries.async_reload(self.entry.entry_id)
+                    return self.async_abort(reason="reauth_successful")
+            except NoHomesFound:
+                errors["base"] = "auth"
 
         return self.async_show_form(
-            step_id="reconfigure",
+            step_id="reauth",
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -255,6 +256,50 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_reconfigure(self, user_input=None) -> FlowResult:
+        """Handle a reconfiguration flow to allow changing flex devices."""
+        self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        self.data = self.entry.data.copy()
+        self.data[CONF_API_KEY] = self._get_current_api_key()
+
+        # _validate_grid_reward populates self.flex_devices
+        validation_result = await self._validate_grid_reward()
+
+        if validation_result != "success":
+            return self.async_abort(reason=validation_result)
+
+        if user_input is not None:
+            new_data = self.entry.data.copy()
+            new_data["flex_devices"] = [
+                {
+                    "id": dev_id,
+                    "type": self.flex_devices[dev_id]["type"],
+                    "name": self.flex_devices[dev_id]["name"],
+                }
+                for dev_id in user_input["flex_devices"]
+            ]
+            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+            await self.hass.config_entries.async_reload(self.entry.entry_id)
+            return self.async_abort(reason="reconfigure_successful")
+
+        device_names = {
+            dev_id: info["name"] for dev_id, info in self.flex_devices.items()
+        }
+        current_device_ids = [
+            d["id"] for d in self.entry.data.get("flex_devices", [])
+        ]
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "flex_devices", default=current_device_ids
+                    ): cv.multi_select(device_names)
+                }
+            ),
         )
 
     def _get_current_api_key(self) -> str:
