@@ -58,7 +58,7 @@ async def test_reauth_flow_success(hass: HomeAssistant, mock_tibber_api, mock_ti
     mock_entry.add_to_hass(hass)
 
     result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_REAUTH, "entry_id": mock_entry.entry_id}
+        DOMAIN, context={"source": "reauth", "entry_id": mock_entry.entry_id}
     )
 
     assert result["type"] == FlowResultType.FORM
@@ -92,7 +92,7 @@ async def test_reauth_flow_invalid_creds(hass: HomeAssistant, mock_tibber_api, m
     mock_tibber_api.return_value.get_homes.side_effect = TibberAuthError
 
     result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_REAUTH, "entry_id": mock_entry.entry_id}
+        DOMAIN, context={"source": "reauth", "entry_id": mock_entry.entry_id}
     )
 
     result2 = await hass.config_entries.flow.async_configure(
@@ -114,7 +114,7 @@ async def test_reconfigure_flow(hass: HomeAssistant, mock_tibber_api, mock_tibbe
 
     with patch("custom_components.tibber_grid_reward.async_setup_entry", return_value=True):
         result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_RECONFIGURE, "entry_id": mock_entry.entry_id}
+            DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
         )
 
     assert result["type"] == FlowResultType.FORM
