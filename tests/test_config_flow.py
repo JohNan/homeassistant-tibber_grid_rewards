@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_PASSWORD, CONF_API_KEY
 from homeassistant.data_entry_flow import FlowResultType
