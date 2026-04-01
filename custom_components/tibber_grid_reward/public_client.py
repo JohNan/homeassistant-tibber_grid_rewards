@@ -62,23 +62,19 @@ class TibberPublicAPI:
             home(id: $homeId) {
               currentSubscription {
                 priceInfo {
-                  current {
-                    total
-                    energy
-                    tax
-                    startsAt
-                  }
                   today {
                     total
                     energy
                     tax
                     startsAt
+                    currency
                   }
                   tomorrow {
                     total
                     energy
                     tax
                     startsAt
+                    currency
                   }
                 }
               }

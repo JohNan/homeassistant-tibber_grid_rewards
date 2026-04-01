@@ -204,3 +204,53 @@ async def test_price_sensor_isolation(
     assert any(
         isinstance(entity, PriceSensor) for entity in added_entities
     ), "PriceSensor should be added to entities"
+
+from unittest.mock import AsyncMock
+
+async def test_price_sensor_update():
+    """Test PriceSensor correctly extracts current price and currency from today/tomorrow arrays."""
+    mock_public_api = MagicMock()
+
+    now = dt_util.now()
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    # Use a string format similar to what Tibber API returns (e.g., +02:00 or Z)
+    # ISO string with explicit timezone to test parsing logic
+    current_hour_str = current_hour.strftime("%Y-%m-%dT%H:%M:%S%z")
+    if not current_hour_str.endswith("Z") and "+" not in current_hour_str[-6:]:
+        # If naive, just format it like Tibber API would return, e.g. .isoformat()
+        current_hour_str = current_hour.isoformat()
+
+    # Let's ensure it has an explicit offset to test robust parsing, Home Assistant's dt_util.now() is timezone aware
+    # Tibber usually returns like: 2024-04-01T12:00:00.000+02:00
+    current_hour_str = current_hour.strftime("%Y-%m-%dT%H:%M:%S.000%z")
+    # Python strftime %z produces +0200, Tibber produces +02:00
+    if len(current_hour_str) >= 5 and current_hour_str[-5] in ('+', '-'):
+        current_hour_str = current_hour_str[:-2] + ":" + current_hour_str[-2:]
+
+    mock_public_api.get_price_info = AsyncMock(return_value={
+        "today": [
+            {
+                "total": 0.5,
+                "energy": 0.4,
+                "tax": 0.1,
+                "startsAt": current_hour_str,
+                "currency": "SEK"
+            }
+        ],
+        "tomorrow": []
+    })
+
+    description = MagicMock()
+    description.key = "current_price"
+
+    sensor = PriceSensor(
+        mock_public_api,
+        "test_home_id",
+        "test_entry_id",
+        description,
+    )
+
+    await sensor.async_update()
+
+    assert sensor.native_value == 0.5
+    assert sensor.native_unit_of_measurement == "SEK"

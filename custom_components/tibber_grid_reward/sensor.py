@@ -297,18 +297,31 @@ class PriceSensor(SensorEntity):
         if not price_info:
             return
 
-        current_price = price_info.get("current")
-        if current_price:
-            self._attr_native_value = current_price.get("total")
-            # Note: The currency is not available in the priceInfo query from the public API
-            # in the same way as the private API. This will be addressed later if possible.
-
         now = dt_util.now()
+        current_hour = now.replace(minute=0, second=0, microsecond=0)
 
         today_prices_data = price_info.get("today", [])
         tomorrow_prices_data = price_info.get("tomorrow", [])
-
         all_prices_data = today_prices_data + tomorrow_prices_data
+
+        def is_current_hour(price_dict):
+            starts_at_str = price_dict.get("startsAt")
+            if not starts_at_str:
+                return False
+            dt = dt_util.parse_datetime(starts_at_str)
+            if not dt:
+                return False
+            return dt == current_hour
+
+        current_price = next(
+            (p for p in all_prices_data if is_current_hour(p)), None
+        )
+
+        if current_price:
+            self._attr_native_value = current_price.get("total")
+            if "currency" in current_price:
+                self._attr_native_unit_of_measurement = current_price["currency"]
+
         all_prices = [
             p["total"] for p in all_prices_data if p.get("total") is not None
         ]
