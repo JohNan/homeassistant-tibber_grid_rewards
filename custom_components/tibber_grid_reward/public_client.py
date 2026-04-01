@@ -1,6 +1,7 @@
 import logging
 import httpx
 from typing import Any, Dict, List
+from datetime import datetime, timedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,6 +26,8 @@ class TibberPublicAPI:
         self.headers = {
             "Authorization": f"Bearer {self._token}",
         }
+        self._price_cache = {}
+        self._price_cache_time = {}
 
     async def get_homes(self) -> List[Dict[str, Any]]:
         """Fetch Tibber homes."""
@@ -55,6 +58,12 @@ class TibberPublicAPI:
 
     async def get_price_info(self, home_id: str) -> Dict[str, Any] | None:
         """Fetch price info for a specific home."""
+        now = datetime.now()
+        cache_time = self._price_cache_time.get(home_id)
+        if cache_time and now - cache_time < timedelta(hours=6):
+            _LOGGER.debug("Returning cached price info for home %s.", home_id)
+            return self._price_cache.get(home_id)
+
         _LOGGER.debug("Fetching price info for home %s from public API.", home_id)
         query = """
         query($homeId: ID!) {
@@ -90,9 +99,12 @@ class TibberPublicAPI:
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched price info from public API.")
             data = response.json()
-            return data.get("data", {}).get("viewer", {}).get("home", {}).get(
+            price_info = data.get("data", {}).get("viewer", {}).get("home", {}).get(
                 "currentSubscription", {}
             ).get("priceInfo")
+            self._price_cache[home_id] = price_info
+            self._price_cache_time[home_id] = now
+            return price_info
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 _LOGGER.error("Authentication failed with public API.")
