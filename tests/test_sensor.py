@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
@@ -205,7 +205,6 @@ async def test_price_sensor_isolation(
         isinstance(entity, PriceSensor) for entity in added_entities
     ), "PriceSensor should be added to entities"
 
-from unittest.mock import AsyncMock
 
 async def test_price_sensor_update():
     """Test PriceSensor correctly extracts current price and currency from today/tomorrow arrays."""
