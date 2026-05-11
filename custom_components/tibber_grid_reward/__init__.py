@@ -21,7 +21,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Tibber Grid Reward from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    client = get_async_client(hass, verify_ssl=False)
+    client = get_async_client(hass)
 
     api = TibberAPI(
         entry.data["username"],
