@@ -45,6 +45,53 @@ def test_update_data(sensor):
     assert sensor.native_value == datetime.time(8, 0)
     sensor.async_write_ha_state.assert_called_once()
 
+def test_update_data_offline_vehicle_key(sensor):
+    """Offline vehicles (e.g. Leaf, Renault 5 E-TECH) report departure time
+    under a different key prefix that drops the smartCharging segment."""
+    sensor.update_data(
+        {
+            "userSettings": [
+                {
+                    "key": "offline.vehicle.departureTimes.monday",
+                    "value": "08:00",
+                }
+            ]
+        }
+    )
+    assert sensor.native_value == datetime.time(8, 0)
+    sensor.async_write_ha_state.assert_called_once()
+
+def test_update_data_offline_vehicle_unset_day(sensor):
+    """Offline vehicles represent an unset day with the literal string
+    'No departure time' rather than omitting the key or using None."""
+    sensor.update_data(
+        {
+            "userSettings": [
+                {
+                    "key": "offline.vehicle.departureTimes.monday",
+                    "value": "No departure time",
+                }
+            ]
+        }
+    )
+    assert sensor.native_value is None
+    sensor.async_write_ha_state.assert_called_once()
+
+def test_update_data_no_matching_key(sensor):
+    """Neither known key shape present: value stays None, no exception."""
+    sensor.update_data(
+        {
+            "userSettings": [
+                {
+                    "key": "online.vehicle.smartCharging.departureTimes.tuesday",
+                    "value": "08:00",
+                }
+            ]
+        }
+    )
+    assert sensor.native_value is None
+    sensor.async_write_ha_state.assert_called_once()
+
 async def test_async_set_value(sensor, mock_api):
     await sensor.async_set_value(datetime.time(9, 30))
     mock_api.set_departure_time.assert_called_once_with(

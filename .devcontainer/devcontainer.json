@@ -1,6 +1,6 @@
 {
 	"name": "Home Assistant Custom Component Devcontainer",
-	"image": "ghcr.io/home-assistant/devcontainer:stable",
+	"image": "ghcr.io/home-assistant/devcontainer:apps",
 	"postCreateCommand": "pip install -r requirements_test.txt",
 	"forwardPorts": [
 		8123

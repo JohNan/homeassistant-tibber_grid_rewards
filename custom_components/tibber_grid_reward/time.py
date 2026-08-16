@@ -14,6 +14,16 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Tibber uses different userSettings key prefixes for the same logical
+# departure-time setting depending on whether the vehicle is "online"
+# (directly API-connected, e.g. Tesla) or "offline" (tracked manually,
+# e.g. Nissan Leaf, Renault 5 E-TECH). Both must be checked when reading
+# incoming data. The write path (client.py) is unaffected: Tibber's
+# backend resolves mutations by vehicleId/homeId regardless of which
+# prefix is sent, so it only ever needs the online-style key.
+ONLINE_DEPARTURE_TIME_KEY = "online.vehicle.smartCharging.departureTimes.{day}"
+OFFLINE_DEPARTURE_TIME_KEY = "offline.vehicle.departureTimes.{day}"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -64,13 +74,25 @@ class DepartureTimeEntity(TimeEntity):
     def update_data(self, data: dict[str, Any]) -> None:
         """Update the entity."""
         settings = data.get("userSettings", [])
-        key = f"online.vehicle.smartCharging.departureTimes.{self._day_name}"
+        candidate_keys = (
+            ONLINE_DEPARTURE_TIME_KEY.format(day=self._day_name),
+            OFFLINE_DEPARTURE_TIME_KEY.format(day=self._day_name),
+        )
         time_str = None
+        matched_key = None
         for setting in settings:
-            if setting["key"] == key:
+            if setting["key"] in candidate_keys:
                 time_str = setting["value"]
+                matched_key = setting["key"]
                 break
-        
+
+        if matched_key is None:
+            _LOGGER.debug(
+                "No departure time setting found for %s among known key shapes %s",
+                self.entity_id,
+                candidate_keys,
+            )
+
         if time_str:
             try:
                 self._attr_native_value = datetime.time.fromisoformat(time_str)
