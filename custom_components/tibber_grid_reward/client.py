@@ -361,8 +361,10 @@ class TibberAPI:
 
         Confirmed (live write-then-readback test, 2026-08-16) only against an
         offline vehicle (isAlive: false). Online, API-connected vehicles
-        report real telemetry via battery.level, so this should only ever be
-        called for vehicles confirmed offline — see number.py's gating.
+        (e.g. Tesla) don't report a usable value for battery.level either —
+        confirmed live (2026-08-18) that it comes back unknown/null there —
+        so this should only ever be called for vehicles confirmed offline;
+        see number.py's gating.
         """
         _LOGGER.debug("Setting battery level for vehicle %s to %s", vehicle_id, level)
         token = await self.fetch_token()
