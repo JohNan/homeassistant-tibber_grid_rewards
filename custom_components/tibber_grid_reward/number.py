@@ -8,11 +8,14 @@ from homeassistant.components.number import NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+NUMBER_PLATFORM = "number"
 
 
 async def async_setup_entry(
@@ -37,7 +40,9 @@ async def async_setup_entry(
         if device["type"] == "vehicle":
             vehicle_id = device["id"]
             vehicle_devices = entry_data["vehicle_devices"][vehicle_id]
-            manager = _BatteryLevelEntityManager(api, config_entry.entry_id, device, vehicle_devices, async_add_entities)
+            manager = _BatteryLevelEntityManager(
+                hass, api, config_entry.entry_id, device, vehicle_devices, async_add_entities
+            )
             vehicle_devices.append(manager)
 
 
@@ -56,9 +61,16 @@ class _BatteryLevelEntityManager:
     BatteryLevelEntity) so it receives updates through the existing
     per-vehicle callback without any change to that dispatch mechanism.
     Removes itself from the list once resolved either way.
+
+    Also cleans up any battery level entity a previous version of this
+    integration may have already registered for a vehicle now confirmed
+    online — otherwise it's orphaned in the entity registry, with nothing
+    left to provide it a state, and shows as permanently unavailable
+    instead of disappearing.
     """
 
-    def __init__(self, api, entry_id, device, vehicle_devices, async_add_entities):
+    def __init__(self, hass, api, entry_id, device, vehicle_devices, async_add_entities):
+        self._hass = hass
         self._api = api
         self._entry_id = entry_id
         self._device = device
@@ -94,6 +106,21 @@ class _BatteryLevelEntityManager:
                 "Vehicle %s confirmed online; battery level entity is not applicable",
                 self._device["id"],
             )
+            self._async_remove_stale_entity()
+
+    def _async_remove_stale_entity(self) -> None:
+        """Remove a battery level entity a previous integration version may
+        have registered for this now-confirmed-online vehicle."""
+        registry = er.async_get(self._hass)
+        unique_id = f"{self._device['id']}_battery_level"
+        entity_id = registry.async_get_entity_id(NUMBER_PLATFORM, DOMAIN, unique_id)
+        if entity_id:
+            _LOGGER.debug(
+                "Removing stale battery level entity %s for online vehicle %s",
+                entity_id,
+                self._device["id"],
+            )
+            registry.async_remove(entity_id)
 
 
 class BatteryLevelEntity(NumberEntity):
