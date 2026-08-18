@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 import pytest
 
 from custom_components.tibber_grid_reward.number import (
@@ -26,25 +26,8 @@ def async_add_entities():
     return MagicMock()
 
 @pytest.fixture
-def mock_registry():
-    """A stand-in entity registry with no pre-existing entries by default."""
-    registry = MagicMock()
-    registry.async_get_entity_id.return_value = None
-    return registry
-
-@pytest.fixture(autouse=True)
-def patch_entity_registry(mock_registry):
-    with patch(
-        "custom_components.tibber_grid_reward.number.er.async_get",
-        return_value=mock_registry,
-    ):
-        yield mock_registry
-
-@pytest.fixture
 def manager(mock_api, device, vehicle_devices, async_add_entities):
-    manager = _BatteryLevelEntityManager(
-        MagicMock(), mock_api, "test_entry_id", device, vehicle_devices, async_add_entities
-    )
+    manager = _BatteryLevelEntityManager(mock_api, "test_entry_id", device, vehicle_devices, async_add_entities)
     vehicle_devices.append(manager)
     return manager
 
@@ -61,22 +44,6 @@ def test_manager_confirmed_online_adds_nothing(manager, vehicle_devices, async_a
     assert manager not in vehicle_devices
     assert vehicle_devices == []
     async_add_entities.assert_not_called()
-
-def test_manager_confirmed_online_removes_stale_registry_entity(manager, mock_registry):
-    """A previous integration version may have already registered this
-    entity for what's now a confirmed-online vehicle; it must be cleaned
-    up rather than left to show as permanently unavailable."""
-    mock_registry.async_get_entity_id.return_value = "number.my_car_battery_level"
-    manager.update_data({"isAlive": True})
-    mock_registry.async_get_entity_id.assert_called_once_with(
-        "number", DOMAIN, "vehicle1_battery_level"
-    )
-    mock_registry.async_remove.assert_called_once_with("number.my_car_battery_level")
-
-def test_manager_confirmed_online_no_stale_entity_is_a_noop(manager, mock_registry):
-    """Nothing registered for this vehicle: no removal attempted."""
-    manager.update_data({"isAlive": True})
-    mock_registry.async_remove.assert_not_called()
 
 def test_manager_confirmed_offline_adds_entity(manager, vehicle_devices, async_add_entities, mock_api):
     manager.update_data({"isAlive": False, "battery": {"level": 77}})
