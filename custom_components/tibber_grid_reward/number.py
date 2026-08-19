@@ -144,6 +144,19 @@ class BatteryLevelEntity(NumberEntity):
     @callback
     def update_data(self, data: dict[str, Any]) -> None:
         """Update the entity."""
+        if self.hass is None:
+            # async_add_entities() (called by the manager that created us)
+            # registers this entity with hass as a background task rather
+            # than synchronously, so a vehicleState update can land here
+            # before that finishes. __init__ already applied the data that
+            # triggered creation; skip until we're actually attached, the
+            # next update will catch up.
+            _LOGGER.debug(
+                "Skipping battery level update for vehicle %s: not yet attached to hass",
+                self._device_id,
+            )
+            return
+
         if data.get("isAlive") is True:
             # Defensive: this entity is only ever created for a vehicle
             # confirmed offline, but if a later update reports it online

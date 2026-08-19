@@ -68,6 +68,10 @@ def test_manager_resolves_only_once(manager, vehicle_devices, async_add_entities
 @pytest.fixture
 def entity(mock_api, device):
     entity = BatteryLevelEntity(mock_api, "test_entry_id", device, {"isAlive": False, "battery": {"level": 40}})
+    # Simulate having already been added to hass by async_add_entities,
+    # like every real entity by the time update_data() would normally run.
+    entity.hass = MagicMock()
+    entity.entity_id = "number.my_car_battery_level"
     entity.async_write_ha_state = MagicMock()
     return entity
 
@@ -81,6 +85,20 @@ def test_device_info(entity):
     assert entity.device_info == {
         "identifiers": {(DOMAIN, "vehicle1")},
     }
+
+def test_update_data_before_added_to_hass_is_a_noop(mock_api, device):
+    """Regression: async_add_entities() registers an entity with hass as a
+    background task, not synchronously. A vehicleState update landing
+    before that finishes must not crash trying to write state."""
+    entity = BatteryLevelEntity(mock_api, "test_entry_id", device, {"isAlive": False, "battery": {"level": 40}})
+    entity.async_write_ha_state = MagicMock()
+    assert entity.hass is None
+
+    entity.update_data({"isAlive": False, "battery": {"level": 99}})
+
+    entity.async_write_ha_state.assert_not_called()
+    # Untouched by the skipped update; still reflects the constructor data.
+    assert entity.native_value == 40
 
 def test_update_data_offline_vehicle(entity):
     entity.update_data({"isAlive": False, "battery": {"level": 77}})
