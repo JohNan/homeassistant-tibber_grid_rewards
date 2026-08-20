@@ -87,6 +87,39 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
+    async def set_smart_charging_enabled(self, home_id: str, vehicle_id: str, enabled: bool) -> None:
+        _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "operationName": "SetVehicleSettings",
+            "variables": {
+                "vehicleId": vehicle_id,
+                "homeId": home_id,
+                "settings": [{
+                    "key": "online.vehicle.smartCharging.enabled",
+                    "value": "true" if enabled else "false"
+                }]
+            },
+            "query": """
+            mutation SetVehicleSettings($vehicleId: String!, $homeId: String!, $settings: [SettingsItemInput!]) {
+              me {
+                setVehicleSettings(id: $vehicleId, homeId: $homeId, settings: $settings) {
+                  __typename
+                }
+              }
+            }
+            """
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            _LOGGER.debug("Successfully updated smart charging setting.")
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e
+
     async def validate_grid_reward(self, home_id: str) -> Dict[str, Any] | None:
         _LOGGER.debug("Validating grid reward for home: %s", home_id)
         token = await self.fetch_token()
