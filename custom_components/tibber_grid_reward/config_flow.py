@@ -1,17 +1,17 @@
 import asyncio
 import logging
+
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.helpers.httpx_client import get_async_client
-import homeassistant.helpers.config_validation as cv
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import callback
-from homeassistant.data_entry_flow import FlowResult, AbortFlow
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.helpers.httpx_client import get_async_client
 
 from .client import TibberAPI, TibberAuthError, TibberConnectionError
 from .const import CONF_API_KEY, DOMAIN
 from .public_client import TibberPublicAPI, TibberPublicAuthError, TibberPublicException
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""

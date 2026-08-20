@@ -4,12 +4,13 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.components.device_automation import DEVICE_ACTION_BASE_SCHEMA
-from homeassistant.components.time import DOMAIN as TIME_DOMAIN, ATTR_TIME
+from homeassistant.components.time import ATTR_TIME
+from homeassistant.components.time import DOMAIN as TIME_DOMAIN
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_ENTITY_ID, CONF_TYPE
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers import entity_registry as er, config_validation as cv
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 

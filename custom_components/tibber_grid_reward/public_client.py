@@ -1,7 +1,8 @@
 import logging
-import httpx
-from typing import Any, Dict, List
 from datetime import datetime, timedelta
+from typing import Any
+
+import httpx
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class TibberPublicAPI:
         self._price_cache = {}
         self._price_cache_time = {}
 
-    async def get_homes(self) -> List[Dict[str, Any]]:
+    async def get_homes(self) -> list[dict[str, Any]]:
         """Fetch Tibber homes."""
         _LOGGER.debug("Fetching Tibber homes from public API.")
         query = "{ viewer { homes { id appNickname address { address1 } } } }"
@@ -56,7 +57,7 @@ class TibberPublicAPI:
             _LOGGER.error("An unexpected error occurred while fetching homes: %s", e)
             raise TibberPublicException from e
 
-    async def get_price_info(self, home_id: str) -> Dict[str, Any] | None:
+    async def get_price_info(self, home_id: str) -> dict[str, Any] | None:
         """Fetch price info for a specific home."""
         now = datetime.now()
         cache_time = self._price_cache_time.get(home_id)

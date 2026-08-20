@@ -1,14 +1,13 @@
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from homeassistant.const import CONF_API_KEY, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
-from homeassistant.const import CONF_PASSWORD, CONF_API_KEY
 from homeassistant.data_entry_flow import FlowResultType
-
-from custom_components.tibber_grid_reward.const import DOMAIN
-from custom_components.tibber_grid_reward.client import TibberAuthError
-
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.tibber_grid_reward.client import TibberAuthError
+from custom_components.tibber_grid_reward.const import DOMAIN
 
 # Mock data
 MOCK_USERNAME = "test@example.com"
@@ -137,3 +136,26 @@ async def test_reconfigure_flow(hass: HomeAssistant, mock_tibber_api, mock_tibbe
     assert mock_entry.data["flex_devices"][0]["id"] == "flex2"
     assert mock_entry.data["flex_devices"][0]["name"] == "Battery"
     assert len(mock_setup_entry.mock_calls) == 1
+
+
+async def test_options_flow(hass: HomeAssistant, mock_tibber_public_api):
+    """Test options flow initialization and completion."""
+    mock_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data=MOCK_CONFIG_DATA,
+        options={CONF_API_KEY: "old_key"},
+    )
+    mock_entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(mock_entry.entry_id)
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "init"
+
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_API_KEY: "new_api_key"},
+    )
+
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+    assert result2["data"] == {CONF_API_KEY: "new_api_key"}
