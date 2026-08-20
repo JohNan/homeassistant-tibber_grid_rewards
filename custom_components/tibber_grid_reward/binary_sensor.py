@@ -1,7 +1,8 @@
 """Platform for binary sensor integration."""
 from __future__ import annotations
-from typing import Any
+
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,

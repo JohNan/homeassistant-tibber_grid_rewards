@@ -1,6 +1,24 @@
+import struct
 from pathlib import Path
 
-from PIL import Image
+PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+
+
+def _verify_png_image(filepath: Path) -> None:
+    """Verify that a file exists, is non-empty, and has valid PNG header and dimensions."""
+    assert filepath.exists(), f"File missing: {filepath}"
+    assert filepath.stat().st_size > 0, f"File is empty: {filepath}"
+
+    with filepath.open("rb") as f:
+        header = f.read(8)
+        assert header == PNG_HEADER, f"File is not a valid PNG image: {filepath}"
+
+        # Read IHDR chunk
+        _, chunk_type = struct.unpack(">I4s", f.read(8))
+        assert chunk_type == b"IHDR", f"Missing IHDR chunk in PNG: {filepath}"
+
+        width, height = struct.unpack(">II", f.read(8))
+        assert width > 0 and height > 0, f"Invalid dimensions for PNG: {filepath}"
 
 
 def test_integration_icons_exist():
@@ -9,13 +27,7 @@ def test_integration_icons_exist():
     icon_files = ["icon.png", "logo.png", "icon@2x.png", "logo@2x.png"]
 
     for icon_name in icon_files:
-        icon_path = base_dir / icon_name
-        assert icon_path.exists(), f"Icon file {icon_name} missing from component directory"
-        assert icon_path.stat().st_size > 0, f"Icon file {icon_name} is empty"
-
-        # Verify it's a valid PNG image
-        with Image.open(icon_path) as img:
-            assert img.format == "PNG", f"Icon file {icon_name} is not a valid PNG image"
+        _verify_png_image(base_dir / icon_name)
 
 
 def test_root_icons_exist():
@@ -24,10 +36,4 @@ def test_root_icons_exist():
     icon_files = ["icon.png", "logo.png", "icon@2x.png", "logo@2x.png"]
 
     for icon_name in icon_files:
-        icon_path = base_dir / icon_name
-        assert icon_path.exists(), f"Icon file {icon_name} missing from root directory"
-        assert icon_path.stat().st_size > 0, f"Icon file {icon_name} is empty"
-
-        # Verify it's a valid PNG image
-        with Image.open(icon_path) as img:
-            assert img.format == "PNG", f"Icon file {icon_name} is not a valid PNG image"
+        _verify_png_image(base_dir / icon_name)

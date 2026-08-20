@@ -1,9 +1,10 @@
 from unittest.mock import MagicMock
+
 import pytest
 
 from custom_components.tibber_grid_reward.binary_sensor import (
-    GridRewardActiveSensor,
     GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION,
+    GridRewardActiveSensor,
 )
 from custom_components.tibber_grid_reward.const import DOMAIN
 
