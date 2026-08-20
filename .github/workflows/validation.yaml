@@ -18,7 +18,7 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "integration"
-          ignore: "brands, license"
+          ignore: "brands"
 
   hassfest:
     name: Hassfest
