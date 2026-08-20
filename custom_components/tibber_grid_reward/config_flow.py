@@ -31,6 +31,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize options flow."""
         self._config_entry = config_entry
 
+    @property
+    def config_entry(self) -> config_entries.ConfigEntry:
+        """Return the config entry for the options flow."""
+        return self._config_entry
+
     async def async_step_init(self, user_input=None):
         """Manage the options."""
         errors = {}
