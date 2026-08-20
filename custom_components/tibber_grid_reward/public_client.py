@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -59,7 +59,7 @@ class TibberPublicAPI:
 
     async def get_price_info(self, home_id: str) -> dict[str, Any] | None:
         """Fetch price info for a specific home."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         cache_time = self._price_cache_time.get(home_id)
         if cache_time and now - cache_time < timedelta(hours=6):
             _LOGGER.debug("Returning cached price info for home %s.", home_id)
@@ -112,7 +112,7 @@ class TibberPublicAPI:
                 raise TibberPublicAuthError from e
             _LOGGER.error("Could not fetch price info from public API: %s", e)
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             _LOGGER.error(
                 "An unexpected error occurred while fetching price info: %s", e
             )

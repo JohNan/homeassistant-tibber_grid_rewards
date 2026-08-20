@@ -70,7 +70,7 @@ async def test_grid_reward_current_day_sensor(mock_api, entry_id):
     """Test the GridRewardCurrentDaySensor."""
     mock_tracker = MagicMock()
     mock_tracker.daily_reward = 10.5
-    description = [d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day"][0]
+    description = next(d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day")
     sensor = GridRewardCurrentDaySensor(mock_api, entry_id, mock_tracker, description)
     sensor.async_write_ha_state = MagicMock()
 
