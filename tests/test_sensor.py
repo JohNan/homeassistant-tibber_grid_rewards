@@ -1,19 +1,20 @@
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from custom_components.tibber_grid_reward.const import DOMAIN
 from custom_components.tibber_grid_reward.sensor import (
-    GridRewardSensor,
-    GridRewardCurrentDaySensor,
-    RewardSessionSensor,
-    FlexDeviceSensor,
-    GRID_REWARD_SENSORS,
     FLEX_DEVICE_SENSORS,
-    async_setup_entry,
+    GRID_REWARD_SENSORS,
+    FlexDeviceSensor,
+    GridRewardCurrentDaySensor,
+    GridRewardSensor,
     PriceSensor,
+    RewardSessionSensor,
+    async_setup_entry,
 )
 
 
@@ -69,7 +70,7 @@ async def test_grid_reward_current_day_sensor(mock_api, entry_id):
     """Test the GridRewardCurrentDaySensor."""
     mock_tracker = MagicMock()
     mock_tracker.daily_reward = 10.5
-    description = [d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day"][0]
+    description = next(d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day")
     sensor = GridRewardCurrentDaySensor(mock_api, entry_id, mock_tracker, description)
     sensor.async_write_ha_state = MagicMock()
 
