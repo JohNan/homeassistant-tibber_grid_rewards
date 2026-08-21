@@ -1,13 +1,14 @@
+import pytest
 from unittest.mock import AsyncMock, patch
 
-import pytest
-from homeassistant.const import CONF_API_KEY, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_PASSWORD, CONF_API_KEY
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.tibber_grid_reward.client import TibberAuthError
 from custom_components.tibber_grid_reward.const import DOMAIN
+from custom_components.tibber_grid_reward.client import TibberAuthError
+
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # Mock data
 MOCK_USERNAME = "test@example.com"

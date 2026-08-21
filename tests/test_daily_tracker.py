@@ -1,7 +1,6 @@
 """Tests for the DailyRewardTracker."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
+from unittest.mock import MagicMock, patch, AsyncMock
 import pytest
 
 from custom_components.tibber_grid_reward.daily_tracker import DailyRewardTracker

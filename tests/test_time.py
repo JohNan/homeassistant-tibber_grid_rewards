@@ -1,11 +1,9 @@
+from unittest.mock import MagicMock, AsyncMock
 import datetime
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
-from custom_components.tibber_grid_reward.const import DOMAIN
 from custom_components.tibber_grid_reward.time import DepartureTimeEntity
-
+from custom_components.tibber_grid_reward.const import DOMAIN
 
 @pytest.fixture
 def mock_api():

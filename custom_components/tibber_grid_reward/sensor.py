@@ -1,14 +1,12 @@
 """Platform for sensor integration."""
 import logging
-
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     SensorEntity,
+    SensorDeviceClass,
     SensorEntityDescription,
 )
 from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
-
 from .const import DOMAIN
 from .public_client import TibberPublicAPI
 

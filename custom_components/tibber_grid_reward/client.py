@@ -1,15 +1,13 @@
 import asyncio
-import json
 import logging
-import ssl
 import time
-import uuid
-from collections.abc import Callable
-from typing import Any
-
-import httpx
 import jwt
 import websockets
+import httpx
+import json
+import uuid
+import ssl
+from typing import Callable, Any, List, Dict
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,8 +33,8 @@ class TibberAPI:
         self._cached_exp: float = 0
         self._ws_reconnect: bool = True
         self._websocket: websockets.client.WebSocketClientProtocol | None = None
-        self._sub_callback: Callable[[dict[str, Any]], None] | None = None
-        self._vehicle_callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self._sub_callback: Callable[[Dict[str, Any]], None] | None = None
+        self._vehicle_callbacks: Dict[str, Callable[[Dict[str, Any]], None]] = {}
         self.home_id: str | None = None
 
     async def _get_ssl_context(self) -> ssl.SSLContext:
@@ -62,9 +60,9 @@ class TibberAPI:
                 timeout=10
             )
             response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: Dict[str, Any] = response.json()
             token: str = data.get("token")
-            decoded: dict[str, Any] = jwt.decode(token, options={"verify_signature": False})
+            decoded: Dict[str, Any] = jwt.decode(token, options={"verify_signature": False})
             self._cached_exp = decoded.get("exp", 0)
             self._cached_token = token
             _LOGGER.debug("Successfully fetched new Tibber token.")
@@ -74,7 +72,7 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-    async def get_homes(self) -> list[dict[str, Any]]:
+    async def get_homes(self) -> List[Dict[str, Any]]:
         _LOGGER.debug("Fetching Tibber homes.")
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -89,7 +87,7 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-    async def validate_grid_reward(self, home_id: str) -> dict[str, Any] | None:
+    async def validate_grid_reward(self, home_id: str) -> Dict[str, Any] | None:
         _LOGGER.debug("Validating grid reward for home: %s", home_id)
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -110,7 +108,7 @@ class TibberAPI:
                 subscribe_msg = self._build_grid_reward_subscribe_message(home_id, "1")
                 await websocket.send(json.dumps(subscribe_msg))
                 msg = await asyncio.wait_for(websocket.recv(), timeout=10)
-                data: dict[str, Any] = json.loads(msg)
+                data: Dict[str, Any] = json.loads(msg)
 
                 if data.get("type") == "next":
                     _LOGGER.debug("Successfully validated grid reward.")
@@ -121,10 +119,10 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-    def register_grid_reward_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
+    def register_grid_reward_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         self._sub_callback = callback
 
-    def register_vehicle_callback(self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]) -> None:
+    def register_vehicle_callback(self, vehicle_id: str, callback: Callable[[Dict[str, Any]], None]) -> None:
         self._vehicle_callbacks[vehicle_id] = callback
 
     async def subscribe_grid_reward(self, home_id: str) -> None:
@@ -149,7 +147,7 @@ class TibberAPI:
                         current_sub_id: str | None = None
                         while True:
                             msg = await websocket.recv()
-                            data: dict[str, Any] = json.loads(msg)
+                            data: Dict[str, Any] = json.loads(msg)
 
                             if data.get("type") == "connection_ack":
                                 _LOGGER.debug("Websocket connection acknowledged.")
@@ -202,7 +200,7 @@ class TibberAPI:
                         current_sub_id: str | None = None
                         while True:
                             msg = await websocket.recv()
-                            data: dict[str, Any] = json.loads(msg)
+                            data: Dict[str, Any] = json.loads(msg)
 
                             if data.get("type") == "connection_ack":
                                 _LOGGER.debug("Websocket connection acknowledged.")
@@ -232,7 +230,7 @@ class TibberAPI:
             _LOGGER.info("Tibber websocket subscription task cancelled.")
             raise
 
-    def _build_grid_reward_subscribe_message(self, home_id: str, sub_id: str) -> dict[str, Any]:
+    def _build_grid_reward_subscribe_message(self, home_id: str, sub_id: str) -> Dict[str, Any]:
         return {
             "type": "subscribe",
             "id": sub_id,
@@ -287,7 +285,7 @@ class TibberAPI:
             }
         }
 
-    def _build_vehicle_state_subscribe_message(self, vehicle_id: str, sub_id: str) -> dict[str, Any]:
+    def _build_vehicle_state_subscribe_message(self, vehicle_id: str, sub_id: str) -> Dict[str, Any]:
         return {
             "type": "subscribe",
             "id": sub_id,
