@@ -93,14 +93,15 @@ class TibberAPI:
         _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
-        payload = {
+        val_str = "true" if enabled else "false"
+        payload_online = {
             "operationName": "SetVehicleSettings",
             "variables": {
                 "vehicleId": vehicle_id,
                 "homeId": home_id,
                 "settings": [{
-                    "key": "online.vehicle.smartCharging.enabled",
-                    "value": "true" if enabled else "false"
+                    "key": "online.vehicle.smartCharging.isEnabled",
+                    "value": val_str
                 }]
             },
             "query": """
@@ -114,8 +115,25 @@ class TibberAPI:
             """
         }
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_online)
             response.raise_for_status()
+            res_json = response.json()
+            if res_json.get("errors"):
+                # If online setting key fails (e.g., offline vehicle), attempt offline setting key
+                payload_offline = {
+                    "operationName": "SetVehicleSettings",
+                    "variables": {
+                        "vehicleId": vehicle_id,
+                        "homeId": home_id,
+                        "settings": [{
+                            "key": "offline.vehicle.smartCharging.isEnabled",
+                            "value": val_str
+                        }]
+                    },
+                    "query": payload_online["query"]
+                }
+                response_offline = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_offline)
+                response_offline.raise_for_status()
             _LOGGER.debug("Successfully updated smart charging setting.")
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e

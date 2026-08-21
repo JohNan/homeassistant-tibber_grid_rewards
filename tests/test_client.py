@@ -69,7 +69,7 @@ async def test_set_smart_charging_enabled(client: TibberAPI):
         "homeId": "home1",
         "settings": [
             {
-                "key": "online.vehicle.smartCharging.enabled",
+                "key": "online.vehicle.smartCharging.isEnabled",
                 "value": "true",
             }
         ],

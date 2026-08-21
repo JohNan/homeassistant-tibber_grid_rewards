@@ -77,7 +77,11 @@ class SmartChargingSwitch(SwitchEntity):
         # Check vehicleState update (userSettings)
         user_settings = data.get("userSettings", [])
         for setting in user_settings:
-            if setting.get("key") == "online.vehicle.smartCharging.enabled":
+            if setting.get("key") in (
+                "online.vehicle.smartCharging.isEnabled",
+                "offline.vehicle.smartCharging.isEnabled",
+                "online.vehicle.smartCharging.enabled",
+            ):
                 val = setting.get("value")
                 if isinstance(val, bool):
                     self._attr_is_on = val
