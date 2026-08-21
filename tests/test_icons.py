@@ -30,6 +30,15 @@ def test_integration_icons_exist():
         _verify_png_image(base_dir / icon_name)
 
 
+def test_brand_icons_exist():
+    """Test that brand directory icon and logo files exist and are valid PNGs."""
+    base_dir = Path("custom_components/tibber_grid_reward/brand")
+    icon_files = ["icon.png", "logo.png", "icon@2x.png", "logo@2x.png"]
+
+    for icon_name in icon_files:
+        _verify_png_image(base_dir / icon_name)
+
+
 def test_root_icons_exist():
     """Test that root icon and logo files exist and are valid PNGs."""
     base_dir = Path(".")
