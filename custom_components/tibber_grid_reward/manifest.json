@@ -5,7 +5,7 @@
   "config_flow": true,
   "documentation": "https://github.com/JohNan/homeassistant-tibber_grid_rewards",
   "integration_type": "service",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/JohNan/homeassistant-tibber_grid_rewards/issues",
   "requirements": [],
   "version": "1.0.0"

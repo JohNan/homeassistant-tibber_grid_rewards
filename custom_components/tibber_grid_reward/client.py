@@ -403,6 +403,22 @@ class TibberAPI:
         try:
             response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
             response.raise_for_status()
+            res_json = response.json()
+            if res_json.get("errors"):
+                payload_offline = {
+                    "operationName": "SetVehicleSettings",
+                    "variables": {
+                        "vehicleId": vehicle_id,
+                        "homeId": home_id,
+                        "settings": [{
+                            "key": f"offline.vehicle.departureTimes.{day.lower()}",
+                            "value": time_str
+                        }]
+                    },
+                    "query": payload["query"]
+                }
+                response_offline = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_offline)
+                response_offline.raise_for_status()
             _LOGGER.debug("Successfully set departure time.")
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e

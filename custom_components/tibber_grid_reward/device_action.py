@@ -4,7 +4,6 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.components.device_automation import DEVICE_ACTION_BASE_SCHEMA
 from homeassistant.components.time import ATTR_TIME
 from homeassistant.components.time import DOMAIN as TIME_DOMAIN
 from homeassistant.const import CONF_DEVICE_ID, CONF_DOMAIN, CONF_ENTITY_ID, CONF_TYPE
@@ -70,7 +69,7 @@ async def async_call_action_from_config(
     )
 
 
-ACTION_SCHEMA = DEVICE_ACTION_BASE_SCHEMA.extend(
+ACTION_SCHEMA = cv.DEVICE_ACTION_BASE_SCHEMA.extend(
     {
         vol.Required(CONF_ENTITY_ID): cv.entity_id,
         vol.Required(CONF_TYPE): vol.In(ACTION_TYPES),
