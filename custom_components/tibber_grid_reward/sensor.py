@@ -1,12 +1,14 @@
 """Platform for sensor integration."""
 import logging
+
 from homeassistant.components.sensor import (
-    SensorEntity,
     SensorDeviceClass,
+    SensorEntity,
     SensorEntityDescription,
 )
 from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
+
 from .const import DOMAIN
 from .public_client import TibberPublicAPI
 
@@ -142,7 +144,8 @@ class GridRewardSensor(SensorEntity):
         )
         self._attributes = data
         self._attr_native_value = self._get_state(data)
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     def _get_state(self, data):
         """Get the state of the sensor."""
@@ -241,7 +244,8 @@ class FlexDeviceSensor(SensorEntity):
             if device.get(device_id_key) == self._device_id:
                 self._attributes = device
                 self._attr_native_value = self._get_state(device)
-                self.async_write_ha_state()
+                if self.hass is not None:
+                    self.async_write_ha_state()
                 break
 
     def _get_state(self, data):

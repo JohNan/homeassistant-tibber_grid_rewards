@@ -3,10 +3,10 @@
   "name": "Tibber Grid Reward",
   "codeowners": ["@JohNan"],
   "config_flow": true,
-  "documentation": "https://github.com/gemini/tibber-grid-reward",
+  "documentation": "https://github.com/JohNan/homeassistant-tibber_grid_rewards",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/gemini/tibber-grid-reward/issues",
+  "issue_tracker": "https://github.com/JohNan/homeassistant-tibber_grid_rewards/issues",
   "requirements": [],
   "version": "1.0.0"
 }

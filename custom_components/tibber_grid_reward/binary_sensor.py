@@ -1,7 +1,8 @@
 """Platform for binary sensor integration."""
 from __future__ import annotations
-from typing import Any
+
 import logging
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -73,4 +74,5 @@ class GridRewardActiveSensor(BinarySensorEntity):
             self._attributes.get("state", {}).get("__typename")
             == "GridRewardDelivering"
         )
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()

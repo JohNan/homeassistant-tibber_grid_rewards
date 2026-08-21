@@ -43,3 +43,34 @@ async def test_fetch_token_auth_error(client: TibberAPI):
 
     with pytest.raises(TibberAuthError):
         await client.fetch_token()
+
+
+async def test_set_smart_charging_enabled(client: TibberAPI):
+    """Test setting smart charging enabled."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_mutation_response = MagicMock(spec=httpx.Response)
+    mock_mutation_response.status_code = 200
+    mock_mutation_response.json.return_value = {
+        "data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_mutation_response]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        await client.set_smart_charging_enabled("home1", "vehicle1", True)
+
+    assert client._client.post.call_count == 2
+    mutation_call_args = client._client.post.call_args_list[1]
+    assert mutation_call_args.kwargs["json"]["variables"] == {
+        "vehicleId": "vehicle1",
+        "homeId": "home1",
+        "settings": [
+            {
+                "key": "online.vehicle.smartCharging.isEnabled",
+                "value": "true",
+            }
+        ],
+    }
