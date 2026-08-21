@@ -81,6 +81,11 @@ def test_update_data_from_smart_charging_status(switch_entity):
     assert switch_entity.is_on is True
     switch_entity.async_write_ha_state.assert_called_once()
 
+    switch_entity.async_write_ha_state.reset_mock()
+    switch_entity.update_data({"smartChargingStatus": "suspended"})
+    assert switch_entity.is_on is True
+    switch_entity.async_write_ha_state.assert_called_once()
+
 
 async def test_async_turn_on(switch_entity, mock_api):
     await switch_entity.async_turn_on()

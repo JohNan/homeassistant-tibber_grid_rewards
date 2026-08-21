@@ -5,7 +5,9 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
+    SensorStateClass,
 )
+from homeassistant.const import PERCENTAGE
 from homeassistant.core import callback
 from homeassistant.util import dt as dt_util
 
@@ -64,6 +66,14 @@ FLEX_DEVICE_SENSORS: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+VEHICLE_BATTERY_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="battery_level",
+    name="Battery Level",
+    device_class=SensorDeviceClass.BATTERY,
+    native_unit_of_measurement=PERCENTAGE,
+    state_class=SensorStateClass.MEASUREMENT,
+)
+
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the sensor platform."""
@@ -109,6 +119,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             grid_reward_sensors.append(
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
             )
+        if device.get("type") == "vehicle":
+            vehicle_id = device["id"]
+            battery_sensor = VehicleBatterySensor(api, config_entry.entry_id, device)
+            sensors.append(battery_sensor)
+            if (
+                "vehicle_devices" in entry_data
+                and vehicle_id in entry_data["vehicle_devices"]
+            ):
+                entry_data["vehicle_devices"][vehicle_id].append(battery_sensor)
 
     hass.data[DOMAIN][config_entry.entry_id]["grid_reward_devices"].extend(
         grid_reward_sensors
@@ -376,3 +395,59 @@ class PriceSensor(SensorEntity):
             else None,
             "tomorrow_valid": bool(tomorrow_prices_data),
         }
+
+
+class VehicleBatterySensor(SensorEntity):
+    """Representation of a vehicle battery level sensor."""
+
+    entity_description = VEHICLE_BATTERY_SENSOR_DESCRIPTION
+
+    def __init__(self, api, entry_id: str, device: dict):
+        """Initialize the vehicle battery sensor."""
+        self._api = api
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_battery_level"
+        self._attr_name = f"{self._device_name} Battery Level"
+        self._attr_native_value = None
+
+    @property
+    def device_info(self):
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    @callback
+    def update_data(self, data: dict) -> None:
+        """Update entity with vehicle state data."""
+        _LOGGER.debug(
+            "Updating vehicle battery sensor %s with data: %s", self.unique_id, data
+        )
+        battery = data.get("battery")
+        if isinstance(battery, dict):
+            level = battery.get("level")
+            if level is not None:
+                try:
+                    self._attr_native_value = int(level)
+                except (ValueError, TypeError):
+                    self._attr_native_value = level
+                if self.hass is not None:
+                    self.async_write_ha_state()
+                return
+
+        for setting in data.get("userSettings", []):
+            if setting.get("key") in ("batteryLevel", "offline.vehicle.batteryLevel"):
+                val = setting.get("value")
+                if val is not None:
+                    try:
+                        self._attr_native_value = int(val)
+                    except (ValueError, TypeError):
+                        self._attr_native_value = val
+                    if self.hass is not None:
+                        self.async_write_ha_state()
+                    return

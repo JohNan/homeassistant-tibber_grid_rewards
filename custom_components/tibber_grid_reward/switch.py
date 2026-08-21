@@ -97,7 +97,7 @@ class SmartChargingSwitch(SwitchEntity):
                 if isinstance(status, bool):
                     self._attr_is_on = status
                 elif isinstance(status, str):
-                    self._attr_is_on = status.lower() in ("enabled", "active", "true", "on")
+                    self._attr_is_on = status.lower() in ("enabled", "active", "true", "on", "suspended")
                 self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:

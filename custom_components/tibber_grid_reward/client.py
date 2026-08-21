@@ -93,7 +93,6 @@ class TibberAPI:
         _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
-        val_str = "true" if enabled else "false"
         payload_online = {
             "operationName": "SetVehicleSettings",
             "variables": {
@@ -101,7 +100,7 @@ class TibberAPI:
                 "homeId": home_id,
                 "settings": [{
                     "key": "online.vehicle.smartCharging.isEnabled",
-                    "value": val_str
+                    "value": enabled
                 }]
             },
             "query": """
@@ -127,7 +126,7 @@ class TibberAPI:
                         "homeId": home_id,
                         "settings": [{
                             "key": "offline.vehicle.smartCharging.isEnabled",
-                            "value": val_str
+                            "value": enabled
                         }]
                     },
                     "query": payload_online["query"]
@@ -364,6 +363,10 @@ class TibberAPI:
                   chargingStatus
                   smartChargingStatus
                   hasConsumption
+                  battery {
+                    __typename
+                    level
+                  }
                   userSettings {
                     __typename
                     ...setting

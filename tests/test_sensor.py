@@ -14,6 +14,7 @@ from custom_components.tibber_grid_reward.sensor import (
     GridRewardSensor,
     PriceSensor,
     RewardSessionSensor,
+    VehicleBatterySensor,
     async_setup_entry,
 )
 
@@ -285,3 +286,54 @@ def test_sensor_update_data_no_hass(mock_api, entry_id):
         }
     )
     assert flex_sensor.native_value == "PluggedIn"
+
+
+async def test_vehicle_battery_sensor(mock_api, entry_id):
+    """Test the VehicleBatterySensor."""
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    sensor = VehicleBatterySensor(mock_api, entry_id, device)
+    sensor.hass = MagicMock()
+    sensor.async_write_ha_state = MagicMock()
+
+    assert sensor.name == "My Car Battery Level"
+    assert sensor.unique_id == "vehicle1_battery_level"
+    assert sensor.device_info == {
+        "identifiers": {(DOMAIN, "vehicle1")},
+        "name": "My Car",
+        "manufacturer": "Tibber",
+        "via_device": (DOMAIN, entry_id),
+    }
+
+    # Test update from battery.level
+    sensor.update_data({"battery": {"level": 79}})
+    assert sensor.native_value == 79
+    sensor.async_write_ha_state.assert_called_once()
+
+    # Test update from userSettings fallback
+    sensor.async_write_ha_state.reset_mock()
+    sensor.update_data({"userSettings": [{"key": "batteryLevel", "value": "85"}]})
+    assert sensor.native_value == 85
+    sensor.async_write_ha_state.assert_called_once()
+
+
+async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_entry):
+    """Test setup of VehicleBatterySensor in async_setup_entry."""
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    mock_config_entry.data["flex_devices"] = [device]
+    mock_hass.data[DOMAIN][mock_config_entry.entry_id] = {
+        "api": mock_api,
+        "public_api": None,
+        "flex_devices": [device],
+        "grid_reward_devices": [],
+        "vehicle_devices": {"vehicle1": []},
+        "daily_tracker": MagicMock(),
+        "session_tracker": MagicMock(),
+    }
+
+    async_add_entities = MagicMock()
+    await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+    added_entities = async_add_entities.call_args[0][0]
+    battery_sensors = [e for e in added_entities if isinstance(e, VehicleBatterySensor)]
+    assert len(battery_sensors) == 1
+    assert battery_sensors[0] in mock_hass.data[DOMAIN][mock_config_entry.entry_id]["vehicle_devices"]["vehicle1"]
