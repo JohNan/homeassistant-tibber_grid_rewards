@@ -74,4 +74,5 @@ class GridRewardActiveSensor(BinarySensorEntity):
             self._attributes.get("state", {}).get("__typename")
             == "GridRewardDelivering"
         )
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()

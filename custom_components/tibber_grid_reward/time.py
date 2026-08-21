@@ -79,7 +79,8 @@ class DepartureTimeEntity(TimeEntity):
         else:
             self._attr_native_value = None
             
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     async def async_set_value(self, value: datetime.time | None) -> None:
         """Set the departure time."""
@@ -97,4 +98,5 @@ class DepartureTimeEntity(TimeEntity):
             time_str=time_str,
         )
         self._attr_native_value = value
-        self.async_write_ha_state()
+        if self.hass is not None:
+            self.async_write_ha_state()

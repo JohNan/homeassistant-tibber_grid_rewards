@@ -16,6 +16,7 @@ def sensor():
     sensor = GridRewardActiveSensor(
         mock_api, "test_entry_id", GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION
     )
+    sensor.hass = MagicMock()
     sensor.async_write_ha_state = MagicMock()
     return sensor
 
@@ -45,3 +46,15 @@ def test_update_data(sensor):
     sensor.update_data({"state": {"__typename": "GridRewardAvailable"}})
     assert not sensor.is_on
     assert sensor.async_write_ha_state.call_count == 2
+
+
+def test_update_data_no_hass():
+    """Test update_data when self.hass is None does not raise RuntimeError."""
+    mock_api = MagicMock()
+    sensor_obj = GridRewardActiveSensor(
+        mock_api, "test_entry_id", GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION
+    )
+    assert sensor_obj.hass is None
+
+    sensor_obj.update_data({"state": {"__typename": "GridRewardDelivering"}})
+    assert sensor_obj.is_on
