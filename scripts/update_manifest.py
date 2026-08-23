@@ -1,6 +1,7 @@
 import json
 import sys
 
+
 def update_manifest(version):
     """Update the version in the manifest.json file."""
     manifest_path = "custom_components/tibber_grid_reward/manifest.json"

@@ -43,3 +43,139 @@ async def test_fetch_token_auth_error(client: TibberAPI):
 
     with pytest.raises(TibberAuthError):
         await client.fetch_token()
+
+
+async def test_set_smart_charging_enabled(client: TibberAPI):
+    """Test setting smart charging enabled."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_mutation_response = MagicMock(spec=httpx.Response)
+    mock_mutation_response.status_code = 200
+    mock_mutation_response.json.return_value = {
+        "data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_mutation_response]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        await client.set_smart_charging_enabled("home1", "vehicle1", True)
+
+    assert client._client.post.call_count == 2
+    mutation_call_args = client._client.post.call_args_list[1]
+    assert mutation_call_args.kwargs["json"]["variables"] == {
+        "vehicleId": "vehicle1",
+        "homeId": "home1",
+        "settings": [
+            {
+                "key": "online.vehicle.smartCharging.isEnabled",
+                "value": True,
+            }
+        ],
+    }
+
+
+async def test_set_smart_charging_enabled_offline_fallback(client: TibberAPI):
+    """Test setting smart charging enabled with fallback to offline key."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_mutation_error = MagicMock(spec=httpx.Response)
+    mock_mutation_error.status_code = 200
+    mock_mutation_error.json.return_value = {
+        "errors": [{"message": "Resource Not Found"}]
+    }
+
+    mock_mutation_success = MagicMock(spec=httpx.Response)
+    mock_mutation_success.status_code = 200
+    mock_mutation_success.json.return_value = {
+        "data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_mutation_error, mock_mutation_success]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        await client.set_smart_charging_enabled("home1", "vehicle1", True)
+
+    assert client._client.post.call_count == 3
+    mutation_offline_call = client._client.post.call_args_list[2]
+    assert mutation_offline_call.kwargs["json"]["variables"] == {
+        "vehicleId": "vehicle1",
+        "homeId": "home1",
+        "settings": [
+            {
+                "key": "offline.vehicle.smartCharging.isEnabled",
+                "value": True,
+            }
+        ],
+    }
+
+
+async def test_set_departure_time(client: TibberAPI):
+    """Test setting departure time."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_mutation_response = MagicMock(spec=httpx.Response)
+    mock_mutation_response.status_code = 200
+    mock_mutation_response.json.return_value = {
+        "data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_mutation_response]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        await client.set_departure_time("home1", "vehicle1", "monday", "07:00")
+
+    assert client._client.post.call_count == 2
+    mutation_call_args = client._client.post.call_args_list[1]
+    assert mutation_call_args.kwargs["json"]["variables"] == {
+        "vehicleId": "vehicle1",
+        "homeId": "home1",
+        "settings": [
+            {
+                "key": "online.vehicle.smartCharging.departureTimes.monday",
+                "value": "07:00",
+            }
+        ],
+    }
+
+
+async def test_set_departure_time_offline_fallback(client: TibberAPI):
+    """Test setting departure time with fallback to offline key."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_mutation_error = MagicMock(spec=httpx.Response)
+    mock_mutation_error.status_code = 200
+    mock_mutation_error.json.return_value = {
+        "errors": [{"message": "Resource Not Found"}]
+    }
+
+    mock_mutation_success = MagicMock(spec=httpx.Response)
+    mock_mutation_success.status_code = 200
+    mock_mutation_success.json.return_value = {
+        "data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_mutation_error, mock_mutation_success]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        await client.set_departure_time("home1", "vehicle1", "monday", "07:00")
+
+    assert client._client.post.call_count == 3
+    mutation_offline_call = client._client.post.call_args_list[2]
+    assert mutation_offline_call.kwargs["json"]["variables"] == {
+        "vehicleId": "vehicle1",
+        "homeId": "home1",
+        "settings": [
+            {
+                "key": "offline.vehicle.departureTimes.monday",
+                "value": "07:00",
+            }
+        ],
+    }
