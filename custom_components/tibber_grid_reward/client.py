@@ -424,3 +424,45 @@ class TibberAPI:
             raise TibberConnectionError from e
         except Exception as e:
             raise TibberException from e
+
+    async def set_battery_level(self, home_id: str, vehicle_id: str, level: int) -> None:
+        """Set the assumed/manual battery level for an offline vehicle.
+
+        Confirmed (live write-then-readback test, 2026-08-16) only against an
+        offline vehicle (isAlive: false). Online, API-connected vehicles
+        (e.g. Tesla) don't report a usable value for battery.level either —
+        confirmed live (2026-08-18) that it comes back unknown/null there —
+        so this should only ever be called for vehicles confirmed offline;
+        see number.py's gating.
+        """
+        _LOGGER.debug("Setting battery level for vehicle %s to %s", vehicle_id, level)
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "operationName": "SetVehicleSettings",
+            "variables": {
+                "vehicleId": vehicle_id,
+                "homeId": home_id,
+                "settings": [{
+                    "key": "offline.vehicle.batteryLevel",
+                    "value": str(level)
+                }]
+            },
+            "query": """
+            mutation SetVehicleSettings($vehicleId: String!, $homeId: String!, $settings: [SettingsItemInput!]) {
+              me {
+                setVehicleSettings(id: $vehicleId, homeId: $homeId, settings: $settings) {
+                  __typename
+                }
+              }
+            }
+            """
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            _LOGGER.debug("Successfully set battery level.")
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e

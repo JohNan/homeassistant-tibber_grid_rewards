@@ -13,7 +13,7 @@ from .daily_tracker import DailyRewardTracker
 from .public_client import TibberPublicAPI
 from .session_tracker import RewardSessionTracker
 
-PLATFORMS = ["sensor", "time", "binary_sensor", "switch"]
+PLATFORMS = ["sensor", "time", "binary_sensor", "number", "switch"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,7 +83,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         def update_vehicle_sensors(data):
             """Update all sensors for a specific vehicle."""
             _LOGGER.debug("Vehicle callback for %s triggered with data: %s", device_id, data)
-            for sensor in hass.data[DOMAIN][entry.entry_id]["vehicle_devices"][device_id]:
+            # Iterate a snapshot: some entries (e.g. number.py's battery
+            # level manager) may add/remove themselves from this list in
+            # response to this very update.
+            for sensor in list(hass.data[DOMAIN][entry.entry_id]["vehicle_devices"][device_id]):
                 sensor.update_data(data)
         return update_vehicle_sensors
 
