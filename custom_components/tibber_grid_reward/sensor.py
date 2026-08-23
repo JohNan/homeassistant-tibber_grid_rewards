@@ -121,13 +121,15 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             )
         if device.get("type") == "vehicle":
             vehicle_id = device["id"]
-            battery_sensor = VehicleBatterySensor(api, config_entry.entry_id, device)
-            sensors.append(battery_sensor)
             if (
                 "vehicle_devices" in entry_data
                 and vehicle_id in entry_data["vehicle_devices"]
             ):
-                entry_data["vehicle_devices"][vehicle_id].append(battery_sensor)
+                vehicle_devices = entry_data["vehicle_devices"][vehicle_id]
+                manager = _VehicleBatterySensorManager(
+                    api, config_entry.entry_id, device, vehicle_devices, async_add_entities
+                )
+                vehicle_devices.append(manager)
 
     hass.data[DOMAIN][config_entry.entry_id]["grid_reward_devices"].extend(
         grid_reward_sensors
@@ -397,20 +399,84 @@ class PriceSensor(SensorEntity):
         }
 
 
+class _VehicleBatterySensorManager:
+    """Decides, from the first vehicleState update, whether a
+    VehicleBatterySensor should be created for this vehicle at all.
+
+    This sensor only makes sense for "online" (API-connected, e.g. Tesla)
+    vehicles, which report real telemetry via battery.level. "Offline"
+    vehicles (tracked manually, e.g. Nissan Leaf, Renault 5 E-TECH) instead
+    get number.py's settable BatteryLevelEntity for the same physical
+    quantity — creating both here would give a user two differently-behaved
+    "Battery Level" entities per offline vehicle. So this sensor is only
+    created once a vehicle's first update confirms isAlive is True; offline
+    vehicles never get it.
+
+    A vehicle's online/offline kind isn't known at platform-setup time — it
+    only arrives asynchronously with the first vehicleState update — so,
+    mirroring number.py's _BatteryLevelEntityManager, this sits in the same
+    per-vehicle `vehicle_devices` dispatch list and removes itself once
+    resolved either way.
+    """
+
+    def __init__(self, api, entry_id, device, vehicle_devices, async_add_entities):
+        self._api = api
+        self._entry_id = entry_id
+        self._device = device
+        self._vehicle_devices = vehicle_devices
+        self._async_add_entities = async_add_entities
+        self._resolved = False
+
+    @callback
+    def update_data(self, data: dict) -> None:
+        """Resolve, at most once, whether this vehicle gets the sensor."""
+        if self._resolved:
+            return
+
+        is_alive = data.get("isAlive")
+        if is_alive is None:
+            # Kind not yet known from this payload; wait for a later one.
+            return
+
+        self._resolved = True
+        if self in self._vehicle_devices:
+            self._vehicle_devices.remove(self)
+
+        if is_alive is True:
+            _LOGGER.debug(
+                "Vehicle %s confirmed online; adding its battery level sensor",
+                self._device["id"],
+            )
+            entity = VehicleBatterySensor(self._api, self._entry_id, self._device, data)
+            self._vehicle_devices.append(entity)
+            self._async_add_entities([entity])
+        else:
+            _LOGGER.debug(
+                "Vehicle %s confirmed offline; battery level sensor is not "
+                "applicable (see number.py's BatteryLevelEntity instead)",
+                self._device["id"],
+            )
+
+
 class VehicleBatterySensor(SensorEntity):
-    """Representation of a vehicle battery level sensor."""
+    """Representation of a vehicle battery level sensor.
+
+    Only ever created by _VehicleBatterySensorManager once a vehicle's
+    first update has confirmed isAlive is True, so it applies for as long
+    as it exists.
+    """
 
     entity_description = VEHICLE_BATTERY_SENSOR_DESCRIPTION
 
-    def __init__(self, api, entry_id: str, device: dict):
-        """Initialize the vehicle battery sensor."""
+    def __init__(self, api, entry_id: str, device: dict, data: dict):
+        """Initialize the vehicle battery sensor, populated from the data that confirmed it."""
         self._api = api
         self._entry_id = entry_id
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
         self._attr_unique_id = f"{self._device_id}_battery_level"
         self._attr_name = f"{self._device_name} Battery Level"
-        self._attr_native_value = None
+        self._apply_data(data)
 
     @property
     def device_info(self):
@@ -422,32 +488,36 @@ class VehicleBatterySensor(SensorEntity):
             "via_device": (DOMAIN, self._entry_id),
         }
 
+    def _apply_data(self, data: dict) -> None:
+        """Parse battery.level out of an update, handling it being absent."""
+        battery = data.get("battery")
+        level = battery.get("level") if isinstance(battery, dict) else None
+        if level is None:
+            self._attr_native_value = None
+            return
+        try:
+            self._attr_native_value = int(level)
+        except (ValueError, TypeError):
+            self._attr_native_value = level
+
     @callback
     def update_data(self, data: dict) -> None:
         """Update entity with vehicle state data."""
+        if self.hass is None:
+            # async_add_entities() (called by the manager that created us)
+            # registers this entity with hass as a background task rather
+            # than synchronously, so a vehicleState update can land here
+            # before that finishes. __init__ already applied the data that
+            # triggered creation; skip until we're actually attached, the
+            # next update will catch up.
+            _LOGGER.debug(
+                "Skipping battery level sensor update for vehicle %s: not yet attached to hass",
+                self._device_id,
+            )
+            return
+
         _LOGGER.debug(
             "Updating vehicle battery sensor %s with data: %s", self.unique_id, data
         )
-        battery = data.get("battery")
-        if isinstance(battery, dict):
-            level = battery.get("level")
-            if level is not None:
-                try:
-                    self._attr_native_value = int(level)
-                except (ValueError, TypeError):
-                    self._attr_native_value = level
-                if self.hass is not None:
-                    self.async_write_ha_state()
-                return
-
-        for setting in data.get("userSettings", []):
-            if setting.get("key") in ("batteryLevel", "offline.vehicle.batteryLevel"):
-                val = setting.get("value")
-                if val is not None:
-                    try:
-                        self._attr_native_value = int(val)
-                    except (ValueError, TypeError):
-                        self._attr_native_value = val
-                    if self.hass is not None:
-                        self.async_write_ha_state()
-                    return
+        self._apply_data(data)
+        self.async_write_ha_state()
