@@ -1,5 +1,7 @@
 """Platform for sensor integration."""
+import asyncio
 import logging
+from datetime import timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -22,6 +24,30 @@ PRICE_SENSOR_DESCRIPTION = SensorEntityDescription(
     name="Current Price",
     device_class=SensorDeviceClass.MONETARY,
 )
+
+
+BATTERY_SAVINGS_SENSORS: tuple[SensorEntityDescription, ...] = (
+    SensorEntityDescription(
+        key="TODAY",
+        name="Savings Today",
+        device_class=SensorDeviceClass.MONETARY,
+    ),
+    SensorEntityDescription(
+        key="WEEK",
+        name="Savings This Week",
+        device_class=SensorDeviceClass.MONETARY,
+    ),
+    SensorEntityDescription(
+        key="MONTH",
+        name="Savings This Month",
+        device_class=SensorDeviceClass.MONETARY,
+    ),
+)
+
+# The savings figures move slowly, so there is no point polling them at the
+# platform's default interval. One battery fetch per interval is shared by all
+# three period sensors.
+SAVINGS_MIN_INTERVAL = timedelta(minutes=10)
 
 
 GRID_REWARD_SENSORS: tuple[SensorEntityDescription, ...] = (
@@ -118,6 +144,16 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         for description in FLEX_DEVICE_SENSORS:
             grid_reward_sensors.append(
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
+            )
+        if device.get("type") == "battery":
+            fetcher = BatterySavingsFetcher(
+                api, config_entry.data["home_id"], device["id"]
+            )
+            sensors.extend(
+                BatterySavingsSensor(
+                    fetcher, config_entry.entry_id, device, description
+                )
+                for description in BATTERY_SAVINGS_SENSORS
             )
         if device.get("type") == "vehicle":
             vehicle_id = device["id"]
@@ -223,6 +259,73 @@ class RewardSessionSensor(GridRewardSensor):
             self._attr_native_unit_of_measurement = data.get("rewardCurrency")
             return self._session_tracker.current_session_reward
         return None
+
+
+class BatterySavingsFetcher:
+    """Throttled, shared fetcher for a battery's aggregated savings.
+
+    The three period sensors would otherwise each hit the API on every poll for
+    a figure that barely moves. This fetches once per SAVINGS_MIN_INTERVAL and
+    hands the same result to all of them.
+    """
+
+    def __init__(self, api, home_id: str, battery_id: str):
+        self._api = api
+        self._home_id = home_id
+        self._battery_id = battery_id
+        self._data: dict = {}
+        self._fetched_at = None
+        self._lock = asyncio.Lock()
+
+    async def async_get(self) -> dict:
+        """Return the savings mapping, refreshing it if it has gone stale."""
+        async with self._lock:
+            now = dt_util.utcnow()
+            if (
+                self._fetched_at is None
+                or now - self._fetched_at >= SAVINGS_MIN_INTERVAL
+            ):
+                self._data = await self._api.get_battery_savings(
+                    self._home_id, self._battery_id
+                )
+                self._fetched_at = now
+        return self._data
+
+
+class BatterySavingsSensor(SensorEntity):
+    """Savings for one aggregation period of one battery."""
+
+    entity_description: SensorEntityDescription
+
+    def __init__(self, fetcher, entry_id, device, description: SensorEntityDescription):
+        self.entity_description = description
+        self._fetcher = fetcher
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_savings_{description.key.lower()}"
+        self._attr_name = f"{self._device_name} {description.name}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        data = await self._fetcher.async_get()
+        item = data.get(self.entity_description.key)
+        if not item:
+            # The API returns no total for a period that has not accrued
+            # anything yet, which is normal early in the day.
+            self._attr_native_value = None
+            return
+        self._attr_native_value = item.get("value")
+        self._attr_native_unit_of_measurement = item.get("unit")
 
 
 class FlexDeviceSensor(SensorEntity):
