@@ -4,6 +4,7 @@ import logging
 import ssl
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from typing import Any
 
@@ -88,6 +89,78 @@ class TibberAPI:
             raise TibberConnectionError from e
         except Exception as e:
             raise TibberException from e
+
+    async def get_battery_planned_activity(
+        self, home_id: str, battery_id: str, days_ahead: int = 1
+    ) -> list[dict[str, Any]]:
+        """Fetch the battery's planned activity from now until end of tomorrow.
+
+        This is the data behind the app's "Batteriaktivitet" chart. Items are
+        quarter-hourly and marked FORECAST for the part that has not happened
+        yet. Charge and discharge are in watts; state of charge is a percentage.
+
+        Only the forward-looking part is returned — history is already
+        available from the battery's own sensors. The per-source breakdown
+        (chargedFromSolar and friends) is only populated for historical items,
+        so it is left out.
+        """
+        _LOGGER.debug("Fetching planned activity for battery %s", battery_id)
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        now = datetime.now(timezone.utc)
+        end = (now + timedelta(days=days_ahead)).replace(
+            hour=23, minute=59, second=59, microsecond=0
+        )
+        payload = {
+            "operationName": "GetBatteryPlannedActivity",
+            "variables": {
+                "homeId": home_id,
+                "deviceId": battery_id,
+                "from": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "resolution": "QUARTER_HOURLY",
+            },
+            "query": """
+            query GetBatteryPlannedActivity(
+              $homeId: String!, $deviceId: String!, $from: DateTime!,
+              $to: DateTime!, $resolution: BatteryTimelineResolution!
+            ) {
+              me { home(id: $homeId) {
+                batteryTimeline(
+                  id: $deviceId, from: $from, to: $to, resolution: $resolution
+                ) {
+                  energyFlow { items { kind time charged discharged } }
+                  stateOfCharge { items { kind time stateOfCharge } }
+                }
+              } }
+            }
+            """,
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json().get("data") or {}
+            timeline = (((data.get("me") or {}).get("home") or {})
+                        .get("batteryTimeline") or {})
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e
+
+        soc_by_time = {
+            item.get("time"): item.get("stateOfCharge")
+            for item in ((timeline.get("stateOfCharge") or {}).get("items") or [])
+        }
+        planned: list[dict[str, Any]] = []
+        for item in (timeline.get("energyFlow") or {}).get("items") or []:
+            planned.append({
+                "time": item.get("time"),
+                "kind": item.get("kind"),
+                "charged": item.get("charged"),
+                "discharged": item.get("discharged"),
+                "state_of_charge": soc_by_time.get(item.get("time")),
+            })
+        return planned
 
     async def set_smart_charging_enabled(self, home_id: str, vehicle_id: str, enabled: bool) -> None:
         _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
