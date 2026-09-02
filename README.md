@@ -8,6 +8,7 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 
 - **Grid Reward Sensors**: Provides sensors for the current state of the grid reward, the reason for the current state, and the earnings for the current day and month.
 - **Live Session Reward**: A sensor that shows the live, accumulating reward amount during an active grid reward session.
+- **Battery Planned Activity**: For home batteries, a sensor whose state is the start of the next planned charge or discharge, with Tibber's full quarter-hourly plan (power and forecast state of charge, through tomorrow) as an attribute for charting.
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 

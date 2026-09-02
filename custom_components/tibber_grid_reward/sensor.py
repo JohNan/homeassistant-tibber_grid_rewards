@@ -1,5 +1,6 @@
 """Platform for sensor integration."""
 import logging
+from datetime import timedelta
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -54,6 +55,21 @@ GRID_REWARD_SENSORS: tuple[SensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.MONETARY,
     ),
 )
+
+BATTERY_PLANNED_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="battery_planned_activity",
+    name="Next Planned Activity",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    icon="mdi:calendar-clock",
+)
+
+# The plan barely changes between polls and the payload is a few kilobytes,
+# so there is no point fetching it at the platform's default interval.
+PLANNED_MIN_INTERVAL = timedelta(minutes=15)
+
+# Below this the interval is noise rather than a planned event.
+PLANNED_POWER_THRESHOLD_W = 100
+
 
 FLEX_DEVICE_SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -118,6 +134,16 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         for description in FLEX_DEVICE_SENSORS:
             grid_reward_sensors.append(
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
+            )
+        if device.get("type") == "battery":
+            sensors.append(
+                BatteryPlannedActivitySensor(
+                    api,
+                    config_entry.data["home_id"],
+                    config_entry.entry_id,
+                    device,
+                    BATTERY_PLANNED_SENSOR_DESCRIPTION,
+                )
             )
         if device.get("type") == "vehicle":
             vehicle_id = device["id"]
@@ -223,6 +249,93 @@ class RewardSessionSensor(GridRewardSensor):
             self._attr_native_unit_of_measurement = data.get("rewardCurrency")
             return self._session_tracker.current_session_reward
         return None
+
+
+class BatteryPlannedActivitySensor(SensorEntity):
+    """When the battery next plans to charge or discharge.
+
+    The state is the start of the next planned event, so it can be used in
+    automations directly. The full quarter-hourly plan is exposed as an
+    attribute for charting.
+    """
+
+    entity_description: SensorEntityDescription
+
+    def __init__(self, api, home_id, entry_id, device, description):
+        self.entity_description = description
+        self._api = api
+        self._home_id = home_id
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_{description.key}"
+        self._attr_name = f"{self._device_name} {description.name}"
+        self._fetched_at = None
+        self._planned: list[dict] = []
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        now = dt_util.utcnow()
+        if self._fetched_at is None or now - self._fetched_at >= PLANNED_MIN_INTERVAL:
+            self._planned = await self._api.get_battery_planned_activity(
+                self._home_id, self._device_id
+            )
+            self._fetched_at = now
+
+        forecast = [p for p in self._planned if p.get("kind") == "FORECAST"]
+        nxt = next(
+            (
+                p
+                for p in forecast
+                if (p.get("charged") or 0) >= PLANNED_POWER_THRESHOLD_W
+                or (p.get("discharged") or 0) >= PLANNED_POWER_THRESHOLD_W
+            ),
+            None,
+        )
+
+        self._attr_native_value = (
+            dt_util.parse_datetime(nxt["time"]) if nxt and nxt.get("time") else None
+        )
+        self._attr_extra_state_attributes = {
+            "next_action": (
+                None
+                if not nxt
+                else "charge"
+                if (nxt.get("charged") or 0) >= PLANNED_POWER_THRESHOLD_W
+                else "discharge"
+            ),
+            "next_power_w": (
+                None
+                if not nxt
+                else (nxt.get("charged") or 0) or (nxt.get("discharged") or 0)
+            ),
+            # Trimmed rather than passed through: "kind" is the same for every
+            # item once filtered, and the API returns state of charge with more
+            # decimals than are meaningful. The full payload would otherwise
+            # sit close to Home Assistant's attribute size warning.
+            "forecast": [
+                {
+                    "time": p.get("time"),
+                    "charged": p.get("charged"),
+                    "discharged": p.get("discharged"),
+                    "state_of_charge": (
+                        None
+                        if p.get("state_of_charge") is None
+                        else round(p["state_of_charge"], 1)
+                    ),
+                }
+                for p in forecast
+            ],
+        }
 
 
 class FlexDeviceSensor(SensorEntity):
