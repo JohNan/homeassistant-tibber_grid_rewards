@@ -4,6 +4,7 @@ import logging
 import ssl
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from typing import Any
 
@@ -84,6 +85,68 @@ class TibberAPI:
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched Tibber homes.")
             return response.json().get("data", {}).get("me", {}).get("homes", [])
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e
+
+    async def get_battery_activity(
+        self, home_id: str, battery_id: str, hours_back: int = 6
+    ) -> list[dict[str, Any]]:
+        """Fetch recent battery activity intervals.
+
+        Each interval carries the reason the battery behaved the way it did,
+        as a GraphQL type name such as HomeBatteryChargingForGridRewards or
+        HomeBatteryDischargingAtHighPrice. The interval currently in progress
+        has a null "to".
+
+        Only __typename is requested rather than the app's full fragment; the
+        concrete payloads only add a validUntil that duplicates "to".
+        """
+        _LOGGER.debug("Fetching battery activity for battery %s", battery_id)
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        now = datetime.now(timezone.utc)
+        payload = {
+            "operationName": "GetBatteryActivity",
+            "variables": {
+                "homeId": home_id,
+                "deviceId": battery_id,
+                "from": (now - timedelta(hours=hours_back)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "to": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            "query": """
+            query GetBatteryActivity(
+              $homeId: String!, $deviceId: String!, $from: DateTime!, $to: DateTime!
+            ) {
+              me {
+                home(id: $homeId) {
+                  batteryActivityHistory(id: $deviceId, from: $from, to: $to) {
+                    items {
+                      from
+                      to
+                      reason { __typename }
+                      secondaryReason { __typename }
+                    }
+                  }
+                }
+              }
+            }
+            """,
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json().get("data") or {}
+            history = (
+                ((data.get("me") or {}).get("home") or {}).get(
+                    "batteryActivityHistory"
+                )
+                or {}
+            )
+            return history.get("items") or []
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
         except Exception as e:
