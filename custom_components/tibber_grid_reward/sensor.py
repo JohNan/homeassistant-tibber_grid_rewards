@@ -55,6 +55,31 @@ GRID_REWARD_SENSORS: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
+BATTERY_ACTIVITY_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="battery_activity_reason",
+    name="Activity Reason",
+    icon="mdi:home-battery",
+)
+
+# Tibber reports the reason as a GraphQL type name. Strip the shared prefix and
+# expose snake_case so the value reads as a state rather than a class name:
+# HomeBatteryChargingForGridRewards -> charging_for_grid_rewards
+_REASON_PREFIX = "HomeBattery"
+
+
+def _reason_to_state(typename: str | None) -> str | None:
+    """Turn a reason type name into a snake_case sensor state."""
+    if not typename:
+        return None
+    name = typename[len(_REASON_PREFIX):] if typename.startswith(_REASON_PREFIX) else typename
+    out = []
+    for i, char in enumerate(name):
+        if char.isupper() and i:
+            out.append("_")
+        out.append(char.lower())
+    return "".join(out)
+
+
 FLEX_DEVICE_SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="state",
@@ -118,6 +143,16 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         for description in FLEX_DEVICE_SENSORS:
             grid_reward_sensors.append(
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
+            )
+        if device.get("type") == "battery":
+            sensors.append(
+                BatteryActivitySensor(
+                    api,
+                    config_entry.data["home_id"],
+                    config_entry.entry_id,
+                    device,
+                    BATTERY_ACTIVITY_SENSOR_DESCRIPTION,
+                )
             )
         if device.get("type") == "vehicle":
             vehicle_id = device["id"]
@@ -223,6 +258,57 @@ class RewardSessionSensor(GridRewardSensor):
             self._attr_native_unit_of_measurement = data.get("rewardCurrency")
             return self._session_tracker.current_session_reward
         return None
+
+
+class BatteryActivitySensor(SensorEntity):
+    """Why the battery is doing what it is doing right now.
+
+    Tibber labels each activity interval with a reason, which distinguishes
+    grid rewards from price arbitrage, solar charging and fuse protection —
+    something that cannot be told apart from the inverter side.
+    """
+
+    entity_description: SensorEntityDescription
+
+    def __init__(self, api, home_id, entry_id, device, description):
+        self.entity_description = description
+        self._api = api
+        self._home_id = home_id
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_{description.key}"
+        self._attr_name = f"{self._device_name} {description.name}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    async def async_update(self) -> None:
+        """Fetch new state data for the sensor."""
+        items = await self._api.get_battery_activity(self._home_id, self._device_id)
+        if not items:
+            self._attr_native_value = None
+            self._attr_extra_state_attributes = {}
+            return
+
+        # The interval in progress is the one that has not ended yet. Fall back
+        # to the most recent one if the API has already closed it.
+        current = next((i for i in items if not i.get("to")), items[-1])
+        reason = (current.get("reason") or {}).get("__typename")
+        secondary = (current.get("secondaryReason") or {}).get("__typename")
+
+        self._attr_native_value = _reason_to_state(reason)
+        self._attr_extra_state_attributes = {
+            "reason_raw": reason,
+            "secondary_reason": _reason_to_state(secondary),
+            "since": current.get("from"),
+        }
 
 
 class FlexDeviceSensor(SensorEntity):
