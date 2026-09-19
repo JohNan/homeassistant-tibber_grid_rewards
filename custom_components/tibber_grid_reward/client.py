@@ -89,6 +89,57 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
+    async def get_battery_savings(self, home_id: str, battery_id: str) -> dict[str, Any]:
+        """Fetch aggregated battery savings.
+
+        Mirrors the app's GetBatteryData query. Returns a mapping of period key
+        ("TODAY", "WEEK", "MONTH") to the value item carrying kind "TOTAL",
+        which is what the app shows as "Your total savings".
+        """
+        _LOGGER.debug("Fetching battery savings for battery %s", battery_id)
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        payload = {
+            "operationName": "GetBatterySavings",
+            "variables": {"homeId": home_id, "deviceId": battery_id},
+            "query": """
+            query GetBatterySavings($homeId: String!, $deviceId: String!) {
+              me {
+                home(id: $homeId) {
+                  battery(id: $deviceId) {
+                    aggregatedHistory {
+                      periods {
+                        key
+                        batteryValueItems { value unit kind }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """,
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json().get("data") or {}
+            battery = (
+                ((data.get("me") or {}).get("home") or {}).get("battery") or {}
+            )
+            periods = (battery.get("aggregatedHistory") or {}).get("periods") or []
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e
+
+        savings: dict[str, Any] = {}
+        for period in periods:
+            for item in period.get("batteryValueItems") or []:
+                if item.get("kind") == "TOTAL":
+                    savings[period.get("key")] = item
+                    break
+        return savings
+
     async def set_smart_charging_enabled(self, home_id: str, vehicle_id: str, enabled: bool) -> None:
         _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
         token = await self.fetch_token()
