@@ -55,11 +55,11 @@ Blocks support configurable GraphQL root targets:
 - `root_field = "home"`: Embedded inside `home(id: $homeId) { ... }`.
 - `root_field = "me"`: Embedded inside `me { ... }`.
 
-#### Step A: Define the Query Fragment & Parser (`battery_blocks.py`)
+#### Step A: Define the Query Fragment & Parser (`query_blocks.py`)
 Subclass `GraphQLQueryBlock` to define GraphQL variable definitions, variable evaluation, query fragments, and response parsing:
 
 ```python
-from custom_components.tibber_grid_reward.battery_blocks import GraphQLQueryBlock
+from custom_components.tibber_grid_reward.query_blocks import GraphQLQueryBlock
 
 class BatteryHealthBlock(GraphQLQueryBlock):
     """Modular block for battery health and diagnostics."""
@@ -80,7 +80,7 @@ class BatteryHealthBlock(GraphQLQueryBlock):
 ```
 
 #### Step B: Register the Block
-For battery telemetry, add the block to `DEFAULT_BATTERY_BLOCKS` so it is automatically included in the battery coordinator:
+For battery telemetry, add the block to `DEFAULT_BATTERY_BLOCKS` in `battery_blocks.py` so it is automatically included in the battery coordinator:
 
 ```python
 DEFAULT_BATTERY_BLOCKS: tuple[GraphQLQueryBlock, ...] = (
@@ -94,7 +94,7 @@ DEFAULT_BATTERY_BLOCKS: tuple[GraphQLQueryBlock, ...] = (
 For general non-battery queries (e.g. user profile or multi-home queries), compose an arbitrary query and execute it via `api.execute_query_blocks()`:
 
 ```python
-from custom_components.tibber_grid_reward.battery_blocks import GraphQLQueryComposer
+from custom_components.tibber_grid_reward.query_blocks import GraphQLQueryComposer
 
 composer = GraphQLQueryComposer(
     blocks=[CustomBlock1(), CustomBlock2()],
