@@ -16,52 +16,127 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 
-## Battery Telemetry Architecture
+## Architecture & Adding New Sensors
 
-Battery telemetry is retrieved every 5 minutes (and immediately upon WebSocket state changes) using a single consolidated GraphQL request managed by `TibberBatteryDataCoordinator`.
+The integration uses three distinct data ingestion patterns depending on the data source and update frequency:
 
-### Modular Query Blocks (`BatteryDataBlock`)
+```mermaid
+flowchart TD
+    subgraph Data Sources
+        WS[Tibber WebSocket / Realtime State]
+        GQL[Tibber App API / GraphQL me.home]
+        PUB[Tibber Public API / Price Info]
+    end
 
-The query is composed dynamically using modular blocks subclassing `BatteryDataBlock`:
-- `BatterySavingsBlock`: Fetches `aggregatedHistory` for `TODAY`, `WEEK`, and `MONTH`.
-- `BatteryActivityBlock`: Fetches `batteryActivityHistory` intervals and reason typenames.
-- `BatteryPlannedBlock`: Fetches `batteryTimeline` energy flow and quarter-hourly state-of-charge.
+    subgraph Handlers & Coordinators
+        WSCB[WebSocket Callbacks / entry_data]
+        COORD[TibberBatteryDataCoordinator\nBatteryQueryComposer]
+        POL[Poll-based async_update]
+    end
 
-#### Extending with Custom Telemetry
+    subgraph Sensor Entities
+        S1[GridRewardSensor\nFlexDeviceSensor\nRewardSessionSensor]
+        S2[BatterySavingsSensor\nBatteryActivitySensor\nBatteryPlannedActivitySensor\nCustom Coordinator Sensors]
+        S3[PriceSensor]
+    end
 
-Custom telemetry blocks can be defined and plugged into `BatteryQueryComposer`:
+    WS -->|Push Events| WSCB --> S1
+    WS -->|State Transition Trigger| COORD
+    GQL -->|5-min Polling / Modular Blocks| COORD --> S2
+    PUB -->|Hourly Polling| POL --> S3
+```
+
+### 1. Adding a Battery / Consolidated Query Sensor (`CoordinatorEntity`)
+
+For any data queried through the authenticated GraphQL endpoint (`me.home`), telemetry is managed through `TibberBatteryDataCoordinator`. This avoids redundant API calls and consolidates all data into a single query.
+
+#### Step A: Define the Query Fragment & Parser (`battery_blocks.py`)
+Subclass `BatteryDataBlock` to define variable requirements, GraphQL query fragment, and parser logic:
 
 ```python
 from custom_components.tibber_grid_reward.battery_blocks import BatteryDataBlock
 
-class CustomTelemetryBlock(BatteryDataBlock):
-    name = "custom_telemetry"
-
-    def get_variable_definitions(self) -> dict[str, str]:
-        return {"$limit": "Int!"}
-
-    def get_variables(self, now, home_id, battery_id) -> dict[str, Any]:
-        return {"limit": 10}
+class BatteryHealthBlock(BatteryDataBlock):
+    """Modular block for battery health and diagnostics."""
+    name = "health"
 
     def get_query_fragment(self) -> str:
-        return """customTelemetry(id: $deviceId, limit: $limit) {
-  status
-  metrics {
-    timestamp
-    value
+        return """battery(id: $deviceId) {
+  health {
+    stateOfHealth
+    cycleCount
   }
 }"""
 
-    def parse_response(self, home_data: dict[str, Any]) -> Any:
-        return (home_data.get("customTelemetry") or {}).get("metrics", [])
+    def parse_response(self, home_data: dict[str, Any]) -> dict[str, Any]:
+        battery = home_data.get("battery") or {}
+        return battery.get("health") or {}
 ```
 
-The parsed data is automatically made available in `coordinator.data`:
+#### Step B: Register the Block (`battery_blocks.py`)
+Add the block to `DEFAULT_BATTERY_BLOCKS` so it is automatically included:
+
 ```python
-metrics = coordinator.data["custom_telemetry"]
-# or
-metrics = coordinator.data.get("custom_telemetry")
+DEFAULT_BATTERY_BLOCKS: tuple[BatteryDataBlock, ...] = (
+    BatterySavingsBlock(),
+    BatteryActivityBlock(),
+    BatteryPlannedBlock(),
+    BatteryHealthBlock(),
+)
 ```
+
+#### Step C: Create the Sensor Entity (`sensor.py`)
+Subclass `CoordinatorEntity[TibberBatteryDataCoordinator]` and read the data from `self.coordinator.data`:
+
+```python
+class BatteryCycleCountSensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
+    def __init__(self, coordinator, entry_id, device, description):
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._device_id = device["id"]
+        self._attr_unique_id = f"{self._device_id}_cycle_count"
+
+    @property
+    def native_value(self):
+        health = self.coordinator.data.get("health") or {}
+        return health.get("cycleCount")
+```
+
+Instantiate the sensor in `async_setup_entry` in `sensor.py` under the `device.get("type") == "battery"` loop.
+
+---
+
+### 2. Adding a Real-Time / WebSocket Push Sensor
+
+For sensors that update immediately upon receiving push payloads from Tibber's real-time WebSocket connection:
+
+1. **Entity Base**: Subclass `SensorEntity` (or `GridRewardSensor` / `FlexDeviceSensor` in `sensor.py`).
+2. **Implement `update_data(self, data)`**:
+   ```python
+   @callback
+   def update_data(self, data: dict[str, Any]) -> None:
+       self._attr_native_value = data.get("someField")
+       self.async_write_ha_state()
+   ```
+3. **Dispatch Registration**: In `sensor.py` (`async_setup_entry`), register the entity in either:
+   - `hass.data[DOMAIN][entry_id]["grid_reward_devices"]`: Receives updates whenever Grid Reward WebSocket messages arrive.
+   - `hass.data[DOMAIN][entry_id]["vehicle_devices"][vehicle_id]`: Receives updates when vehicle state pushes arrive.
+
+---
+
+### 3. Adding a Public API / Standalone Polled Sensor
+
+For sensors fetching third-party or unauthenticated data (like Tibber electricity prices via `TibberPublicAPI`):
+
+1. **Implement `async_update(self)`**:
+   ```python
+   class MyPublicSensor(SensorEntity):
+       async def async_update(self) -> None:
+           data = await self._public_api.get_custom_data(self._home_id)
+           self._attr_native_value = data.get("value")
+   ```
+2. **Registration**: Instantiate and add to `sensors` list in `async_setup_entry` in `sensor.py`. Home Assistant will periodically call `async_update`.
+
 
 ## Installation
 
