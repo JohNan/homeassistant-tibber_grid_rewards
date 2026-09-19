@@ -41,6 +41,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     session_tracker = RewardSessionTracker(hass)
     await session_tracker.async_load()
 
+    api_key = entry.data.get("api_key") or entry.options.get("api_key")
+    public_api = None
+    if api_key:
+        public_api = TibberPublicAPI(api_key, client)
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "api": api,
+        "public_api": public_api,
+        "flex_devices": entry.data["flex_devices"],
+        "grid_reward_devices": [],
+        "battery_coordinators": {},
+        "vehicle_devices": {
+            device["id"]: [] for device in entry.data["flex_devices"] if device["type"] == "vehicle"
+        },
+        "daily_tracker": daily_tracker,
+        "session_tracker": session_tracker,
+    }
+
     def update_grid_reward_sensors(data):
         """Update all grid reward sensors."""
         _LOGGER.debug("Grid reward callback triggered with data: %s", data)
@@ -53,28 +71,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         for device in hass.data[DOMAIN][entry.entry_id]["grid_reward_devices"]:
             device.update_data(data)
 
+        for coordinator in hass.data[DOMAIN][entry.entry_id]["battery_coordinators"].values():
+            coordinator.async_request_refresh()
+
     api.register_grid_reward_callback(update_grid_reward_sensors)
     
     entry.async_create_background_task(
         hass, api.subscribe_grid_reward(entry.data["home_id"]), "tibber-grid-reward-subscription"
     )
-
-    api_key = entry.data.get("api_key") or entry.options.get("api_key")
-    public_api = None
-    if api_key:
-        public_api = TibberPublicAPI(api_key, client)
-
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api": api,
-        "public_api": public_api,
-        "flex_devices": entry.data["flex_devices"],
-        "grid_reward_devices": [],
-        "vehicle_devices": {
-            device["id"]: [] for device in entry.data["flex_devices"] if device["type"] == "vehicle"
-        },
-        "daily_tracker": daily_tracker,
-        "session_tracker": session_tracker,
-    }
 
     entry.async_on_unload(entry.add_update_listener(update_listener))
 

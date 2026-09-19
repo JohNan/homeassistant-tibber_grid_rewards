@@ -179,3 +179,116 @@ async def test_set_departure_time_offline_fallback(client: TibberAPI):
             }
         ],
     }
+
+
+async def test_get_battery_details(client: TibberAPI):
+    """Test fetching consolidated battery details."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_query_response = MagicMock(spec=httpx.Response)
+    mock_query_response.status_code = 200
+    mock_query_response.json.return_value = {
+        "data": {
+            "me": {
+                "home": {
+                    "battery": {
+                        "aggregatedHistory": {
+                            "periods": [
+                                {
+                                    "key": "TODAY",
+                                    "batteryValueItems": [
+                                        {"value": 12.34, "unit": "SEK", "kind": "TOTAL"}
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                    "batteryActivityHistory": {
+                        "items": [
+                            {
+                                "from": "2026-09-19T12:00:00Z",
+                                "to": None,
+                                "reason": {"__typename": "HomeBatteryChargingForGridRewards"},
+                                "secondaryReason": None,
+                            }
+                        ]
+                    },
+                    "batteryTimeline": {
+                        "energyFlow": {
+                            "items": [
+                                {
+                                    "kind": "FORECAST",
+                                    "time": "2026-09-19T13:00:00Z",
+                                    "charged": 2500,
+                                    "discharged": 0,
+                                }
+                            ]
+                        },
+                        "stateOfCharge": {
+                            "items": [
+                                {
+                                    "kind": "FORECAST",
+                                    "time": "2026-09-19T13:00:00Z",
+                                    "stateOfCharge": 85.24,
+                                }
+                            ]
+                        },
+                    },
+                }
+            }
+        }
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_query_response]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        details = await client.get_battery_details("home1", "battery1")
+
+    assert "TODAY" in details["savings"]
+    assert details["savings"]["TODAY"]["value"] == 12.34
+    assert len(details["activity"]) == 1
+    assert details["activity"][0]["reason"]["__typename"] == "HomeBatteryChargingForGridRewards"
+    assert len(details["planned"]) == 1
+    assert details["planned"][0]["charged"] == 2500
+    assert details["planned"][0]["state_of_charge"] == 85.24
+
+
+async def test_get_battery_savings_compatibility(client: TibberAPI):
+    """Test get_battery_savings backward compatibility wrapper."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_query_response = MagicMock(spec=httpx.Response)
+    mock_query_response.status_code = 200
+    mock_query_response.json.return_value = {
+        "data": {
+            "me": {
+                "home": {
+                    "battery": {
+                        "aggregatedHistory": {
+                            "periods": [
+                                {
+                                    "key": "MONTH",
+                                    "batteryValueItems": [
+                                        {"value": 450.0, "unit": "SEK", "kind": "TOTAL"}
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_query_response]
+
+    with patch("jwt.decode", return_value={"exp": 9999999999}):
+        savings = await client.get_battery_savings("home1", "battery1")
+
+    assert "MONTH" in savings
+    assert savings["MONTH"]["value"] == 450.0
+

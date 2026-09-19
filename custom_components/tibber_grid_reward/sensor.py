@@ -1,7 +1,6 @@
 """Platform for sensor integration."""
-import asyncio
 import logging
-from datetime import timedelta
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,9 +10,11 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import callback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .coordinator import TibberBatteryDataCoordinator
 from .public_client import TibberPublicAPI
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,10 +45,42 @@ BATTERY_SAVINGS_SENSORS: tuple[SensorEntityDescription, ...] = (
     ),
 )
 
-# The savings figures move slowly, so there is no point polling them at the
-# platform's default interval. One battery fetch per interval is shared by all
-# three period sensors.
-SAVINGS_MIN_INTERVAL = timedelta(minutes=10)
+BATTERY_ACTIVITY_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="battery_activity_reason",
+    name="Activity Reason",
+    icon="mdi:home-battery",
+)
+
+BATTERY_PLANNED_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="battery_planned_activity",
+    name="Next Planned Activity",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    icon="mdi:calendar-clock",
+)
+
+# Tibber reports the reason as a GraphQL type name. Strip the shared prefix and
+# expose snake_case so the value reads as a state rather than a class name:
+# HomeBatteryChargingForGridRewards -> charging_for_grid_rewards
+_REASON_PREFIX = "HomeBattery"
+
+
+def _reason_to_state(typename: str | None) -> str | None:
+    """Turn a reason type name into a snake_case sensor state."""
+    if not typename:
+        return None
+    name = (
+        typename.removeprefix(_REASON_PREFIX)
+    )
+    out = []
+    for i, char in enumerate(name):
+        if char.isupper() and i:
+            out.append("_")
+        out.append(char.lower())
+    return "".join(out)
+
+
+# Below this the interval is noise rather than a planned event.
+PLANNED_POWER_THRESHOLD_W = 100
 
 
 GRID_REWARD_SENSORS: tuple[SensorEntityDescription, ...] = (
@@ -146,14 +179,39 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                 FlexDeviceSensor(api, config_entry.entry_id, device, description)
             )
         if device.get("type") == "battery":
-            fetcher = BatterySavingsFetcher(
-                api, config_entry.data["home_id"], device["id"]
-            )
+            battery_id = device["id"]
+            battery_coordinators = entry_data.setdefault("battery_coordinators", {})
+            if battery_id not in battery_coordinators:
+                coordinator = TibberBatteryDataCoordinator(
+                    hass, api, config_entry.data["home_id"], battery_id
+                )
+                battery_coordinators[battery_id] = coordinator
+            else:
+                coordinator = battery_coordinators[battery_id]
+
+            await coordinator.async_config_entry_first_refresh()
+
             sensors.extend(
                 BatterySavingsSensor(
-                    fetcher, config_entry.entry_id, device, description
+                    coordinator, config_entry.entry_id, device, description
                 )
                 for description in BATTERY_SAVINGS_SENSORS
+            )
+            sensors.append(
+                BatteryActivitySensor(
+                    coordinator,
+                    config_entry.entry_id,
+                    device,
+                    BATTERY_ACTIVITY_SENSOR_DESCRIPTION,
+                )
+            )
+            sensors.append(
+                BatteryPlannedActivitySensor(
+                    coordinator,
+                    config_entry.entry_id,
+                    device,
+                    BATTERY_PLANNED_SENSOR_DESCRIPTION,
+                )
             )
         if device.get("type") == "vehicle":
             vehicle_id = device["id"]
@@ -263,45 +321,20 @@ class RewardSessionSensor(GridRewardSensor):
         return None
 
 
-class BatterySavingsFetcher:
-    """Throttled, shared fetcher for a battery's aggregated savings.
-
-    The three period sensors would otherwise each hit the API on every poll for
-    a figure that barely moves. This fetches once per SAVINGS_MIN_INTERVAL and
-    hands the same result to all of them.
-    """
-
-    def __init__(self, api, home_id: str, battery_id: str):
-        self._api = api
-        self._home_id = home_id
-        self._battery_id = battery_id
-        self._data: dict = {}
-        self._fetched_at = None
-        self._lock = asyncio.Lock()
-
-    async def async_get(self) -> dict:
-        """Return the savings mapping, refreshing it if it has gone stale."""
-        async with self._lock:
-            now = dt_util.utcnow()
-            if (
-                self._fetched_at is None
-                or now - self._fetched_at >= SAVINGS_MIN_INTERVAL
-            ):
-                self._data = await self._api.get_battery_savings(
-                    self._home_id, self._battery_id
-                )
-                self._fetched_at = now
-        return self._data
-
-
-class BatterySavingsSensor(SensorEntity):
+class BatterySavingsSensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
     """Savings for one aggregation period of one battery."""
 
     entity_description: SensorEntityDescription
 
-    def __init__(self, fetcher, entry_id, device, description: SensorEntityDescription):
+    def __init__(
+        self,
+        coordinator: TibberBatteryDataCoordinator,
+        entry_id: str,
+        device: dict[str, Any],
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
         self.entity_description = description
-        self._fetcher = fetcher
         self._entry_id = entry_id
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
@@ -317,17 +350,184 @@ class BatterySavingsSensor(SensorEntity):
             "via_device": (DOMAIN, self._entry_id),
         }
 
-    async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        data = await self._fetcher.async_get()
-        item = data.get(self.entity_description.key)
+    @property
+    def native_value(self):
+        """Return the savings value for this period."""
+        if not self.coordinator.data or not self.coordinator.data.savings:
+            return None
+        item = self.coordinator.data.savings.get(self.entity_description.key)
         if not item:
-            # The API returns no total for a period that has not accrued
-            # anything yet, which is normal early in the day.
-            self._attr_native_value = None
-            return
-        self._attr_native_value = item.get("value")
-        self._attr_native_unit_of_measurement = item.get("unit")
+            return None
+        return item.get("value")
+
+    @property
+    def native_unit_of_measurement(self):
+        """Return currency unit."""
+        if not self.coordinator.data or not self.coordinator.data.savings:
+            return None
+        item = self.coordinator.data.savings.get(self.entity_description.key)
+        if not item:
+            return None
+        return item.get("unit")
+
+
+class BatteryActivitySensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
+    """Why the battery is doing what it is doing right now.
+
+    Tibber labels each activity interval with a reason, which distinguishes
+    grid rewards from price arbitrage, solar charging and fuse protection —
+    something that cannot be told apart from the inverter side.
+    """
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: TibberBatteryDataCoordinator,
+        entry_id: str,
+        device: dict[str, Any],
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_{description.key}"
+        self._attr_name = f"{self._device_name} {description.name}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    def _get_current_interval(self) -> dict[str, Any] | None:
+        if not self.coordinator.data or not self.coordinator.data.activity:
+            return None
+        items = self.coordinator.data.activity
+        if not items:
+            return None
+        return next((i for i in items if not i.get("to")), items[-1])
+
+    @property
+    def native_value(self) -> str | None:
+        """Return snake_case reason state."""
+        current = self._get_current_interval()
+        if not current:
+            return None
+        reason = (current.get("reason") or {}).get("__typename")
+        return _reason_to_state(reason)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return raw reason, secondary reason, and start timestamp."""
+        current = self._get_current_interval()
+        if not current:
+            return {}
+        reason = (current.get("reason") or {}).get("__typename")
+        secondary = (current.get("secondaryReason") or {}).get("__typename")
+        return {
+            "reason_raw": reason,
+            "secondary_reason": _reason_to_state(secondary),
+            "since": current.get("from"),
+        }
+
+
+class BatteryPlannedActivitySensor(
+    CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity
+):
+    """When the battery next plans to charge or discharge.
+
+    The state is the start of the next planned event, so it can be used in
+    automations directly. The full quarter-hourly plan is exposed as an
+    attribute for charting.
+    """
+
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: TibberBatteryDataCoordinator,
+        entry_id: str,
+        device: dict[str, Any],
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._entry_id = entry_id
+        self._device_id = device["id"]
+        self._device_name = device.get("name", self._device_id)
+        self._attr_unique_id = f"{self._device_id}_{description.key}"
+        self._attr_name = f"{self._device_name} {description.name}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": "Tibber",
+            "via_device": (DOMAIN, self._entry_id),
+        }
+
+    def _get_forecast(self) -> list[dict[str, Any]]:
+        if not self.coordinator.data or not self.coordinator.data.planned:
+            return []
+        return [p for p in self.coordinator.data.planned if p.get("kind") == "FORECAST"]
+
+    def _get_next_event(self) -> dict[str, Any] | None:
+        forecast = self._get_forecast()
+        return next(
+            (
+                p
+                for p in forecast
+                if (p.get("charged") or 0) >= PLANNED_POWER_THRESHOLD_W
+                or (p.get("discharged") or 0) >= PLANNED_POWER_THRESHOLD_W
+            ),
+            None,
+        )
+
+    @property
+    def native_value(self):
+        nxt = self._get_next_event()
+        if not nxt or not nxt.get("time"):
+            return None
+        return dt_util.parse_datetime(nxt["time"])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        nxt = self._get_next_event()
+        forecast = self._get_forecast()
+        return {
+            "next_action": (
+                None
+                if not nxt
+                else "charge"
+                if (nxt.get("charged") or 0) >= PLANNED_POWER_THRESHOLD_W
+                else "discharge"
+            ),
+            "next_power_w": (
+                None
+                if not nxt
+                else (nxt.get("charged") or 0) or (nxt.get("discharged") or 0)
+            ),
+            "forecast": [
+                {
+                    "time": p.get("time"),
+                    "charged": p.get("charged"),
+                    "discharged": p.get("discharged"),
+                    "state_of_charge": (
+                        None
+                        if p.get("state_of_charge") is None
+                        else round(p["state_of_charge"], 1)
+                    ),
+                }
+                for p in forecast
+            ],
+        }
 
 
 class FlexDeviceSensor(SensorEntity):

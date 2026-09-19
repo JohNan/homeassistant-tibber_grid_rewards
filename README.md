@@ -8,7 +8,10 @@ This is a custom integration for Home Assistant that allows you to monitor and i
 
 - **Grid Reward Sensors**: Provides sensors for the current state of the grid reward, the reason for the current state, and the earnings for the current day and month.
 - **Live Session Reward**: A sensor that shows the live, accumulating reward amount during an active grid reward session.
-- **Battery Savings Sensors**: For home batteries, provides the total savings for today, this week and this month — the same figure the Tibber app shows as "Your total savings" on the battery screen (discharge savings minus charging costs).
+- **Battery Sensors (Consolidated Coordinator)**: For home batteries, coordinates telemetry in a single API call:
+  - **Savings Sensors**: Total savings for today, this week, and this month (the figure the Tibber app shows as "Your total savings" on the battery screen).
+  - **Activity Reason**: Explains current battery behavior (distinguishing grid rewards from price arbitrage, solar charging, fuse protection, etc.).
+  - **Planned Activity**: Timestamp of the next planned charge/discharge event, with attributes containing the full quarter-hourly power and state-of-charge schedule through tomorrow.
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 
