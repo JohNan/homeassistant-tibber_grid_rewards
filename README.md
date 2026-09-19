@@ -12,7 +12,7 @@ This is a custom integration for Home Assistant that allows you to monitor and i
   - **Savings Sensors**: Total savings for today, this week, and this month (the figure the Tibber app displays as "Your total savings" on the battery screen).
   - **Activity Reason Sensor**: Explains current battery behavior and state transitions, distinguishing grid rewards (`HomeBatteryChargingForGridRewards`, `HomeBatteryDischargingForGridRewards`) from price arbitrage, solar charging, fuse protection, etc.
   - **Planned Activity Sensor**: Timestamp of the next scheduled charge/discharge event, with attributes containing the full quarter-hourly power flow and state-of-charge schedule through tomorrow.
-- **Modular Query Composer**: Extensible query block engine (`BatteryDataBlock` and `BatteryQueryComposer`) allowing custom telemetry fragments and response parsers to be added without modifying core polling logic.
+- **Modular GraphQL Query Engine**: Extensible query block engine (`GraphQLQueryBlock` and `GraphQLQueryComposer` in `query_blocks.py`) allowing arbitrary telemetry and query fragments with custom response parsers to be added without modifying core polling or coordinator logic.
 - **Flexible Device Sensors**: Provides sensors for the state and connectivity of your flexible devices (e.g., electric vehicles).
 - **Departure Time Control**: Allows you to set the departure time for your electric vehicles directly from Home Assistant.
 
