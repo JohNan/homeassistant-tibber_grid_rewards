@@ -5,7 +5,7 @@ import ssl
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -96,98 +96,41 @@ class TibberAPI:
         battery_id: str,
         activity_hours_back: int = 6,
         days_ahead: int = 1,
+        composer: Any | None = None,
     ) -> dict[str, Any]:
         """Fetch battery savings, activity history, and planned timeline in one query.
 
-        Combines:
-        1. Aggregated savings (TODAY, WEEK, MONTH totals).
-        2. Activity intervals with typename reasons distinguishing grid rewards
-           from arbitrage, solar charging, etc.
-        3. Quarter-hourly planned activity timeline (energy flow and state of charge).
+        If a BatteryQueryComposer is provided, query generation, variable generation,
+        and response parsing are delegated to it for modularity.
         """
         _LOGGER.debug("Fetching combined battery details for battery %s", battery_id)
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
         now = datetime.now(timezone.utc)
-        timeline_end = (now + timedelta(days=days_ahead)).replace(
-            hour=23, minute=59, second=59, microsecond=0
-        )
+
+        if composer is not None:
+            query = composer.build_query()
+            variables = composer.build_variables(now, home_id, battery_id)
+        else:
+            from .battery_blocks import (
+                BatteryActivityBlock,
+                BatteryPlannedBlock,
+                BatteryQueryComposer,
+                BatterySavingsBlock,
+            )
+
+            composer = BatteryQueryComposer([
+                BatterySavingsBlock(),
+                BatteryActivityBlock(hours_back=activity_hours_back),
+                BatteryPlannedBlock(days_ahead=days_ahead),
+            ])
+            query = composer.build_query()
+            variables = composer.build_variables(now, home_id, battery_id)
 
         payload = {
             "operationName": "GetBatteryDetails",
-            "variables": {
-                "homeId": home_id,
-                "deviceId": battery_id,
-                "activityFrom": (now - timedelta(hours=activity_hours_back)).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                ),
-                "activityTo": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "timelineFrom": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "timelineTo": timeline_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "resolution": "QUARTER_HOURLY",
-            },
-            "query": """
-            query GetBatteryDetails(
-              $homeId: String!,
-              $deviceId: String!,
-              $activityFrom: DateTime!,
-              $activityTo: DateTime!,
-              $timelineFrom: DateTime!,
-              $timelineTo: DateTime!,
-              $resolution: BatteryTimelineResolution!
-            ) {
-              me {
-                home(id: $homeId) {
-                  battery(id: $deviceId) {
-                    aggregatedHistory {
-                      periods {
-                        key
-                        batteryValueItems {
-                          value
-                          unit
-                          kind
-                        }
-                      }
-                    }
-                  }
-                  batteryActivityHistory(id: $deviceId, from: $activityFrom, to: $activityTo) {
-                    items {
-                      from
-                      to
-                      reason {
-                        __typename
-                      }
-                      secondaryReason {
-                        __typename
-                      }
-                    }
-                  }
-                  batteryTimeline(
-                    id: $deviceId,
-                    from: $timelineFrom,
-                    to: $timelineTo,
-                    resolution: $resolution
-                  ) {
-                    energyFlow {
-                      items {
-                        kind
-                        time
-                        charged
-                        discharged
-                      }
-                    }
-                    stateOfCharge {
-                      items {
-                        kind
-                        time
-                        stateOfCharge
-                      }
-                    }
-                  }
-                }
-              }
-            }
-            """,
+            "variables": variables,
+            "query": query,
         }
         try:
             response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
@@ -199,41 +142,8 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-        # 1. Parse Savings
-        battery_data = home_data.get("battery") or {}
-        periods = (battery_data.get("aggregatedHistory") or {}).get("periods") or []
-        savings: dict[str, Any] = {}
-        for period in periods:
-            for item in period.get("batteryValueItems") or []:
-                if item.get("kind") == "TOTAL":
-                    savings[period.get("key")] = item
-                    break
+        return composer.parse_response(home_data)
 
-        # 2. Parse Activity History
-        activity_history = home_data.get("batteryActivityHistory") or {}
-        activity: list[dict[str, Any]] = activity_history.get("items") or []
-
-        # 3. Parse Planned Activity Timeline
-        timeline = home_data.get("batteryTimeline") or {}
-        soc_by_time = {
-            item.get("time"): item.get("stateOfCharge")
-            for item in ((timeline.get("stateOfCharge") or {}).get("items") or [])
-        }
-        planned: list[dict[str, Any]] = []
-        for item in (timeline.get("energyFlow") or {}).get("items") or []:
-            planned.append({
-                "time": item.get("time"),
-                "kind": item.get("kind"),
-                "charged": item.get("charged"),
-                "discharged": item.get("discharged"),
-                "state_of_charge": soc_by_time.get(item.get("time")),
-            })
-
-        return {
-            "savings": savings,
-            "activity": activity,
-            "planned": planned,
-        }
 
     async def get_battery_savings(self, home_id: str, battery_id: str) -> dict[str, Any]:
         """Fetch aggregated battery savings (kept for backwards compatibility)."""
