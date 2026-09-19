@@ -15,6 +15,7 @@ from custom_components.tibber_grid_reward.sensor import (
     PriceSensor,
     RewardSessionSensor,
     VehicleBatterySensor,
+    _VehicleBatterySensorManager,
     async_setup_entry,
 )
 
@@ -291,12 +292,13 @@ def test_sensor_update_data_no_hass(mock_api, entry_id):
 async def test_vehicle_battery_sensor(mock_api, entry_id):
     """Test the VehicleBatterySensor."""
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
-    sensor = VehicleBatterySensor(mock_api, entry_id, device)
+    sensor = VehicleBatterySensor(mock_api, entry_id, device, {"battery": {"level": 79}})
     sensor.hass = MagicMock()
     sensor.async_write_ha_state = MagicMock()
 
     assert sensor.name == "My Car Battery Level"
     assert sensor.unique_id == "vehicle1_battery_level"
+    assert sensor.native_value == 79
     assert sensor.device_info == {
         "identifiers": {(DOMAIN, "vehicle1")},
         "name": "My Car",
@@ -304,16 +306,58 @@ async def test_vehicle_battery_sensor(mock_api, entry_id):
         "via_device": (DOMAIN, entry_id),
     }
 
-    # Test update from battery.level
-    sensor.update_data({"battery": {"level": 79}})
-    assert sensor.native_value == 79
-    sensor.async_write_ha_state.assert_called_once()
-
-    # Test update from userSettings fallback
-    sensor.async_write_ha_state.reset_mock()
-    sensor.update_data({"userSettings": [{"key": "batteryLevel", "value": "85"}]})
+    # Test update from a later battery.level
+    sensor.update_data({"battery": {"level": 85}})
     assert sensor.native_value == 85
     sensor.async_write_ha_state.assert_called_once()
+
+
+def test_vehicle_battery_sensor_update_before_added_to_hass_is_a_noop(mock_api, entry_id):
+    """Regression: async_add_entities() registers an entity with hass as a
+    background task, not synchronously. A vehicleState update landing
+    before that finishes must not crash trying to write state."""
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    sensor = VehicleBatterySensor(mock_api, entry_id, device, {"battery": {"level": 79}})
+    sensor.async_write_ha_state = MagicMock()
+    assert sensor.hass is None
+
+    sensor.update_data({"battery": {"level": 85}})
+
+    sensor.async_write_ha_state.assert_not_called()
+    assert sensor.native_value == 79
+
+
+async def test_vehicle_battery_sensor_manager_online_adds_sensor(mock_api):
+    """The manager only creates the sensor once a vehicle is confirmed
+    online; offline vehicles get number.py's BatteryLevelEntity instead."""
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    vehicle_devices = []
+    async_add_entities = MagicMock()
+    manager = _VehicleBatterySensorManager(mock_api, "test_entry_id", device, vehicle_devices, async_add_entities)
+    vehicle_devices.append(manager)
+
+    manager.update_data({"isAlive": True, "battery": {"level": 79}})
+
+    assert manager not in vehicle_devices
+    assert len(vehicle_devices) == 1
+    entity = vehicle_devices[0]
+    assert isinstance(entity, VehicleBatterySensor)
+    assert entity.native_value == 79
+    async_add_entities.assert_called_once_with([entity])
+
+
+async def test_vehicle_battery_sensor_manager_offline_adds_nothing(mock_api):
+    """Offline vehicles must not get this sensor at all."""
+    device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
+    vehicle_devices = []
+    async_add_entities = MagicMock()
+    manager = _VehicleBatterySensorManager(mock_api, "test_entry_id", device, vehicle_devices, async_add_entities)
+    vehicle_devices.append(manager)
+
+    manager.update_data({"isAlive": False})
+
+    assert vehicle_devices == []
+    async_add_entities.assert_not_called()
 
 
 async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_entry):
@@ -333,7 +377,20 @@ async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_ent
     async_add_entities = MagicMock()
     await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
 
+    # Nothing is created up front: online/offline kind isn't known yet.
+    async_add_entities.assert_called_once()
     added_entities = async_add_entities.call_args[0][0]
-    battery_sensors = [e for e in added_entities if isinstance(e, VehicleBatterySensor)]
+    assert not any(isinstance(e, VehicleBatterySensor) for e in added_entities)
+
+    vehicle_devices = mock_hass.data[DOMAIN][mock_config_entry.entry_id]["vehicle_devices"]["vehicle1"]
+    assert len(vehicle_devices) == 1
+    manager = vehicle_devices[0]
+    assert isinstance(manager, _VehicleBatterySensorManager)
+
+    # Once confirmed online, the manager adds the real sensor.
+    async_add_entities.reset_mock()
+    manager.update_data({"isAlive": True, "battery": {"level": 50}})
+    async_add_entities.assert_called_once()
+    battery_sensors = [e for e in async_add_entities.call_args[0][0] if isinstance(e, VehicleBatterySensor)]
     assert len(battery_sensors) == 1
-    assert battery_sensors[0] in mock_hass.data[DOMAIN][mock_config_entry.entry_id]["vehicle_devices"]["vehicle1"]
+    assert battery_sensors[0] in vehicle_devices
