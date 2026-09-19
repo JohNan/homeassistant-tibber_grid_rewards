@@ -1,20 +1,52 @@
 {
-	"name": "Home Assistant Custom Component Devcontainer",
-	"image": "ghcr.io/home-assistant/devcontainer:apps",
-	"postCreateCommand": "pip install -r requirements_test.txt",
-	"forwardPorts": [
-		8123
-	],
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"ms-python.python",
-				"ms-python.vscode-pylance",
-				"visualstudioexptteam.vscodeintellicode",
-				"esbenp.prettier-vscode",
-				"redhat.vscode-yaml"
-			]
-		}
-	},
-	"remoteUser": "vscode"
+  "name": "Home Assistant Custom Component Devcontainer",
+  "image": "ghcr.io/home-assistant/devcontainer:6-apps",
+  "overrideCommand": false,
+  "remoteUser": "vscode",
+  "appPort": [
+    "7123:8123",
+    "7357:4357"
+  ],
+  "postStartCommand": "bash devcontainer_bootstrap",
+  "runArgs": [
+    "-e",
+    "GIT_EDITOR=code --wait",
+    "--privileged"
+  ],
+  "workspaceFolder": "/mnt/supervisor/apps/local/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${containerWorkspaceFolder},type=bind,consistency=cached",
+  "containerEnv": {
+    "WORKSPACE_DIRECTORY": "${containerWorkspaceFolder}",
+    "SUPERVISOR_CHANNEL": "beta"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "visualstudioexptteam.vscodeintellicode",
+        "esbenp.prettier-vscode",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "terminal.integrated.profiles.linux": {
+          "zsh": {
+            "path": "/usr/bin/zsh"
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "editor.formatOnPaste": false,
+        "editor.formatOnSave": true,
+        "editor.formatOnType": true,
+        "files.trimTrailingWhitespace": true
+      }
+    }
+  },
+  "mounts": [
+    "type=volume,target=/var/lib/docker",
+    "type=volume,target=/var/lib/containerd",
+    "type=volume,target=/mnt/supervisor",
+    "type=tmpfs,target=/tmp",
+    "source=${localWorkspaceFolder}/custom_components,target=/mnt/supervisor/homeassistant/custom_components,type=bind,consistency=cached"
+  ]
 }
