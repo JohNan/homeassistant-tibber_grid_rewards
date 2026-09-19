@@ -128,7 +128,7 @@ class TibberAPI:
             variables = composer.build_variables(now, home_id, battery_id)
 
         payload = {
-            "operationName": "GetBatteryDetails",
+            "operationName": composer.operation_name,
             "variables": variables,
             "query": query,
         }
@@ -136,13 +136,44 @@ class TibberAPI:
             response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json().get("data") or {}
-            home_data = ((data.get("me") or {}).get("home") or {})
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
         except Exception as e:
             raise TibberException from e
 
-        return composer.parse_response(home_data)
+        return composer.parse_response(data)
+
+    async def execute_query_blocks(
+        self,
+        composer: Any,
+        home_id: str,
+        device_id: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Execute arbitrary modular GraphQL queries composed via GraphQLQueryComposer."""
+        token = await self.fetch_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        now = datetime.now(timezone.utc)
+
+        query = composer.build_query()
+        variables = composer.build_variables(now, home_id, device_id=device_id, **kwargs)
+
+        payload = {
+            "operationName": composer.operation_name,
+            "variables": variables,
+            "query": query,
+        }
+        try:
+            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json().get("data") or {}
+        except httpx.HTTPStatusError as e:
+            raise TibberConnectionError from e
+        except Exception as e:
+            raise TibberException from e
+
+        return composer.parse_response(data)
+
 
 
     async def get_battery_savings(self, home_id: str, battery_id: str) -> dict[str, Any]:

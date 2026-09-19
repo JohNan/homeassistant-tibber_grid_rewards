@@ -46,19 +46,25 @@ flowchart TD
     PUB -->|Hourly Polling| POL --> S3
 ```
 
-### 1. Adding a Battery / Consolidated Query Sensor (`CoordinatorEntity`)
+### 1. Adding a Modular GraphQL Query Sensor (`CoordinatorEntity`)
 
-For any data queried through the authenticated GraphQL endpoint (`me.home`), telemetry is managed through `TibberBatteryDataCoordinator`. This avoids redundant API calls and consolidates all data into a single query.
+For any data queried through the authenticated Tibber GraphQL endpoint, queries are composed modularly using `GraphQLQueryBlock` (aliased as `BatteryDataBlock` for battery telemetry) and `GraphQLQueryComposer`.
+
+Blocks support configurable GraphQL root targets:
+- `root_field = "me.home"`: Embedded inside `me { home(id: $homeId) { ... } }` (default).
+- `root_field = "home"`: Embedded inside `home(id: $homeId) { ... }`.
+- `root_field = "me"`: Embedded inside `me { ... }`.
 
 #### Step A: Define the Query Fragment & Parser (`battery_blocks.py`)
-Subclass `BatteryDataBlock` to define variable requirements, GraphQL query fragment, and parser logic:
+Subclass `GraphQLQueryBlock` to define GraphQL variable definitions, variable evaluation, query fragments, and response parsing:
 
 ```python
-from custom_components.tibber_grid_reward.battery_blocks import BatteryDataBlock
+from custom_components.tibber_grid_reward.battery_blocks import GraphQLQueryBlock
 
-class BatteryHealthBlock(BatteryDataBlock):
+class BatteryHealthBlock(GraphQLQueryBlock):
     """Modular block for battery health and diagnostics."""
     name = "health"
+    root_field = "me.home"
 
     def get_query_fragment(self) -> str:
         return """battery(id: $deviceId) {
@@ -73,11 +79,11 @@ class BatteryHealthBlock(BatteryDataBlock):
         return battery.get("health") or {}
 ```
 
-#### Step B: Register the Block (`battery_blocks.py`)
-Add the block to `DEFAULT_BATTERY_BLOCKS` so it is automatically included:
+#### Step B: Register the Block
+For battery telemetry, add the block to `DEFAULT_BATTERY_BLOCKS` so it is automatically included in the battery coordinator:
 
 ```python
-DEFAULT_BATTERY_BLOCKS: tuple[BatteryDataBlock, ...] = (
+DEFAULT_BATTERY_BLOCKS: tuple[GraphQLQueryBlock, ...] = (
     BatterySavingsBlock(),
     BatteryActivityBlock(),
     BatteryPlannedBlock(),
@@ -85,8 +91,22 @@ DEFAULT_BATTERY_BLOCKS: tuple[BatteryDataBlock, ...] = (
 )
 ```
 
+For general non-battery queries (e.g. user profile or multi-home queries), compose an arbitrary query and execute it via `api.execute_query_blocks()`:
+
+```python
+from custom_components.tibber_grid_reward.battery_blocks import GraphQLQueryComposer
+
+composer = GraphQLQueryComposer(
+    blocks=[CustomBlock1(), CustomBlock2()],
+    operation_name="GetCustomHomeData",
+    root_field="me.home",
+)
+data = await api.execute_query_blocks(composer, home_id=home_id)
+# data["custom_block_1"] is now parsed and accessible
+```
+
 #### Step C: Create the Sensor Entity (`sensor.py`)
-Subclass `CoordinatorEntity[TibberBatteryDataCoordinator]` and read the data from `self.coordinator.data`:
+Subclass `CoordinatorEntity[TibberBatteryDataCoordinator]` (or any custom `DataUpdateCoordinator`) and read the parsed block data from `self.coordinator.data`:
 
 ```python
 class BatteryCycleCountSensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):

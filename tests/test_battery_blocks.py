@@ -1,4 +1,4 @@
-"""Tests for modular battery blocks and BatteryQueryComposer."""
+"""Tests for modular GraphQL query blocks and GraphQLQueryComposer."""
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -7,6 +7,8 @@ from custom_components.tibber_grid_reward.battery_blocks import (
     BatteryDataBlock,
     BatteryQueryComposer,
     BatterySavingsBlock,
+    GraphQLQueryBlock,
+    GraphQLQueryComposer,
 )
 from custom_components.tibber_grid_reward.client import TibberAPI
 from custom_components.tibber_grid_reward.coordinator import (
@@ -16,7 +18,7 @@ from custom_components.tibber_grid_reward.coordinator import (
 
 
 class CustomTestBlock(BatteryDataBlock):
-    """Custom block implementation for testing modularity."""
+    """Custom block implementation for testing modularity on me.home."""
 
     name = "custom_test"
 
@@ -24,7 +26,7 @@ class CustomTestBlock(BatteryDataBlock):
         return {"$customParam": "Boolean!"}
 
     def get_variables(
-        self, now: datetime, home_id: str, battery_id: str
+        self, now: datetime, home_id: str, device_id: str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
         return {"customParam": True}
 
@@ -37,9 +39,26 @@ class CustomTestBlock(BatteryDataBlock):
         return (home_data.get("customTelemetry") or {}).get("status")
 
 
+class CustomRootBlock(GraphQLQueryBlock):
+    """Custom query block operating at me root for generic queries."""
+
+    name = "user_profile"
+    root_field = "me"
+
+    def get_query_fragment(self) -> str:
+        return """name
+email"""
+
+    def parse_response(self, root_data: dict[str, Any]) -> Any:
+        return {
+            "name": root_data.get("name"),
+            "email": root_data.get("email"),
+        }
+
+
 def test_battery_query_composer_defaults():
     """Test BatteryQueryComposer default blocks and query generation."""
-    composer = BatteryQueryComposer()
+    composer = BatteryQueryComposer(operation_name="GetBatteryDetails")
     assert len(composer.blocks) == 3
     assert [b.name for b in composer.blocks] == ["savings", "activity", "planned"]
 
@@ -79,30 +98,63 @@ def test_battery_query_composer_add_custom_block():
     assert "$customParam: Boolean!" in query
     assert "customTelemetry(enabled: $customParam)" in query
 
-    raw_home_data = {
-        "battery": {
-            "aggregatedHistory": {
-                "periods": [
-                    {
-                        "key": "TODAY",
-                        "batteryValueItems": [{"value": 10.5, "unit": "NOK", "kind": "TOTAL"}],
-                    }
-                ]
+    raw_response = {
+        "data": {
+            "me": {
+                "home": {
+                    "battery": {
+                        "aggregatedHistory": {
+                            "periods": [
+                                {
+                                    "key": "TODAY",
+                                    "batteryValueItems": [{"value": 10.5, "unit": "NOK", "kind": "TOTAL"}],
+                                }
+                            ]
+                        }
+                    },
+                    "batteryActivityHistory": {"items": [{"from": "2026-09-19T10:00:00Z"}]},
+                    "batteryTimeline": {
+                        "energyFlow": {"items": [{"time": "2026-09-19T12:00:00Z", "charged": 1000}]},
+                        "stateOfCharge": {"items": [{"time": "2026-09-19T12:00:00Z", "stateOfCharge": 55.0}]},
+                    },
+                    "customTelemetry": {"status": "ACTIVE"},
+                }
             }
-        },
-        "batteryActivityHistory": {"items": [{"from": "2026-09-19T10:00:00Z"}]},
-        "batteryTimeline": {
-            "energyFlow": {"items": [{"time": "2026-09-19T12:00:00Z", "charged": 1000}]},
-            "stateOfCharge": {"items": [{"time": "2026-09-19T12:00:00Z", "stateOfCharge": 55.0}]},
-        },
-        "customTelemetry": {"status": "ACTIVE"},
+        }
     }
 
-    parsed = composer.parse_response(raw_home_data)
+    parsed = composer.parse_response(raw_response)
     assert parsed["savings"]["TODAY"]["value"] == 10.5
     assert len(parsed["activity"]) == 1
     assert len(parsed["planned"]) == 1
     assert parsed["custom_test"] == "ACTIVE"
+
+
+def test_generic_graphql_query_composer_me_root():
+    """Test GraphQLQueryComposer with generic me root."""
+    composer = GraphQLQueryComposer(
+        blocks=[CustomRootBlock()],
+        operation_name="GetUserProfile",
+        root_field="me",
+    )
+
+    query = composer.build_query()
+    assert "query GetUserProfile {" in query
+    assert "me {" in query
+    assert "name" in query
+    assert "email" in query
+
+    raw_response = {
+        "data": {
+            "me": {
+                "name": "Jane Doe",
+                "email": "jane@example.com",
+            }
+        }
+    }
+
+    parsed = composer.parse_response(raw_response)
+    assert parsed["user_profile"] == {"name": "Jane Doe", "email": "jane@example.com"}
 
 
 def test_tibber_battery_data_access():
