@@ -8,6 +8,7 @@ import pytest
 from custom_components.tibber_grid_reward.client import (
     TibberAPI,
     TibberAuthError,
+    TibberException,
 )
 
 
@@ -402,3 +403,25 @@ async def test_execute_block_single(client: TibberAPI):
         power = await client.execute_block(solar_block, "home1")
 
     assert power == 5500
+
+
+async def test_execute_query_blocks_graphql_error(client: TibberAPI):
+    """Test execute_query_blocks raises TibberException on GraphQL errors without data."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+
+    mock_error_response = MagicMock(spec=httpx.Response)
+    mock_error_response.status_code = 200
+    mock_error_response.json.return_value = {
+        "errors": [{"message": "Field 'battery' doesn't exist on type 'Home'"}]
+    }
+
+    client._client.post.side_effect = [mock_token_response, mock_error_response]
+
+    with (
+        patch("jwt.decode", return_value={"exp": 9999999999}),
+        pytest.raises(TibberException, match="GraphQL error executing query blocks"),
+    ):
+        await client.execute_query_blocks(["savings"], "home1")
+

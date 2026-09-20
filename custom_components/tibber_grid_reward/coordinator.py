@@ -172,28 +172,11 @@ class TibberQueryDataCoordinator(DataUpdateCoordinator[TibberBlockData]):
     async def _async_update_data(self) -> TibberBlockData:
         """Fetch telemetry details from Tibber API via query block composer."""
         try:
-            raw: dict[str, Any]
-            api_dict = getattr(self.api, "__dict__", {})
-            if "execute_query_blocks" in api_dict:
-                raw = await self.api.execute_query_blocks(
-                    self.composer,
-                    self.home_id,
-                    device_id=self.device_id,
-                )
-            elif "get_battery_details" in api_dict:
-                raw = await self.api.get_battery_details(
-                    self.home_id, self.device_id, composer=self.composer
-                )
-            elif hasattr(self.api, "execute_query_blocks"):
-                raw = await self.api.execute_query_blocks(
-                    self.composer,
-                    self.home_id,
-                    device_id=self.device_id,
-                )
-            else:
-                raw = await self.api.get_battery_details(
-                    self.home_id, self.device_id, composer=self.composer
-                )
+            raw = await self.api.execute_query_blocks(
+                self.composer,
+                self.home_id,
+                device_id=self.device_id,
+            )
             return TibberBlockData(raw)
         except (TibberConnectionError, TibberException) as err:
             raise UpdateFailed(f"Error communicating with Tibber API: {err}") from err

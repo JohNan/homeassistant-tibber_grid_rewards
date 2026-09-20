@@ -167,9 +167,16 @@ class TibberAPI:
                 GRAPHQL_URL, headers=headers, json=payload
             )
             response.raise_for_status()
-            data = response.json().get("data") or {}
+            res_json = response.json()
+            if res_json.get("errors") and not res_json.get("data"):
+                raise TibberException(
+                    f"GraphQL error executing query blocks: {res_json.get('errors')}"
+                )
+            data = res_json.get("data") or {}
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
+        except TibberException:
+            raise
         except Exception as e:
             raise TibberException from e
 

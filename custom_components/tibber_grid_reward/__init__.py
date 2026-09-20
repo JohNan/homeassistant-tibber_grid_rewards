@@ -3,7 +3,7 @@
 import logging
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryAuthFailed
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
 
@@ -59,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         "session_tracker": session_tracker,
     }
 
+    @callback
     def update_grid_reward_sensors(data):
         """Update all grid reward sensors."""
         _LOGGER.debug("Grid reward callback triggered with data: %s", data)
@@ -84,6 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     def create_vehicle_update_callback(device_id):
         """Create a callback for a specific vehicle."""
+        @callback
         def update_vehicle_sensors(data):
             """Update all sensors for a specific vehicle."""
             _LOGGER.debug("Vehicle callback for %s triggered with data: %s", device_id, data)
@@ -97,8 +99,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     for device in entry.data["flex_devices"]:
         if device["type"] == "vehicle":
             device_id = device["id"]
-            callback = create_vehicle_update_callback(device_id)
-            api.register_vehicle_callback(device_id, callback)
+            vehicle_callback = create_vehicle_update_callback(device_id)
+            api.register_vehicle_callback(device_id, vehicle_callback)
             entry.async_create_background_task(
                 hass, api.subscribe_vehicle_state(device_id), f"tibber-vehicle-subscription-{device_id}"
             )

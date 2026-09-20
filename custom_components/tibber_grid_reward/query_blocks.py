@@ -188,7 +188,9 @@ class GraphQLQueryComposer:
                 var_defs["$deviceId"] = "String!"
 
         for block in self._blocks:
-            var_defs.update(block.get_variable_definitions())
+            for k, v in block.get_variable_definitions().items():
+                norm_k = k if k.startswith("$") else f"${k}"
+                var_defs[norm_k] = v
 
         var_list = ", ".join(f"{k}: {v}" for k, v in var_defs.items())
         header = (
@@ -233,7 +235,12 @@ class GraphQLQueryComposer:
     def build_variables(
         self, now: datetime, home_id: str, device_id: str | None = None, **kwargs: Any
     ) -> dict[str, Any]:
-        """Construct merged variables dictionary from registered blocks."""
+        """Construct merged variables dictionary from registered blocks.
+
+        :param now: Current timezone-aware UTC datetime.
+        :param home_id: Home identifier string.
+        :param device_id: Optional device identifier string.
+        """
         variables: dict[str, Any] = {}
         if self.root_field in ("me.home", "home"):
             variables["homeId"] = home_id
@@ -241,9 +248,10 @@ class GraphQLQueryComposer:
                 variables["deviceId"] = device_id
 
         for block in self._blocks:
-            variables.update(
-                block.get_variables(now, home_id, device_id=device_id, **kwargs)
-            )
+            for k, v in block.get_variables(
+                now, home_id, device_id=device_id, **kwargs
+            ).items():
+                variables[k.lstrip("$")] = v
         return variables
 
     def parse_response(self, response_data: dict[str, Any]) -> dict[str, Any]:
@@ -253,6 +261,8 @@ class GraphQLQueryComposer:
             if isinstance(response_data, dict) and "data" in response_data
             else response_data
         )
+        if not isinstance(data, dict):
+            data = {}
         root_data: dict[str, Any] = data
         if self.root_field == "me.home":
             if "me" in data:

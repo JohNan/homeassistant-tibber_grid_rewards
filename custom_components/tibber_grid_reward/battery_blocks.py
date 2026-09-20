@@ -56,9 +56,14 @@ class BatterySavingsBlock(GraphQLQueryBlock):
         periods = (battery_data.get("aggregatedHistory") or {}).get("periods") or []
         savings: dict[str, Any] = {}
         for period in periods:
+            if not isinstance(period, dict):
+                continue
+            key = period.get("key")
+            if not key:
+                continue
             for item in period.get("batteryValueItems") or []:
-                if item.get("kind") == "TOTAL":
-                    savings[period.get("key")] = item
+                if isinstance(item, dict) and item.get("kind") == "TOTAL":
+                    savings[key] = item
                     break
         return savings
 
@@ -165,9 +170,12 @@ class BatteryPlannedBlock(GraphQLQueryBlock):
         soc_by_time = {
             item.get("time"): item.get("stateOfCharge")
             for item in ((timeline.get("stateOfCharge") or {}).get("items") or [])
+            if isinstance(item, dict) and item.get("time")
         }
         planned: list[dict[str, Any]] = []
         for item in (timeline.get("energyFlow") or {}).get("items") or []:
+            if not isinstance(item, dict) or not item.get("time"):
+                continue
             planned.append(
                 {
                     "time": item.get("time"),

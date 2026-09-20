@@ -556,7 +556,7 @@ async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mo
         "session_tracker": MagicMock(),
     }
 
-    mock_api.get_battery_details = AsyncMock(
+    mock_api.execute_query_blocks = AsyncMock(
         return_value={
             "savings": {"TODAY": {"value": 5.0, "unit": "SEK", "kind": "TOTAL"}},
             "activity": [],
@@ -585,12 +585,12 @@ async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mo
 async def test_battery_coordinator_update_failure(mock_hass, mock_api):
     """Test coordinator update failure on API error."""
     coordinator = TibberBatteryDataCoordinator(mock_hass, mock_api, "home1", "battery1")
-    mock_api.get_battery_details = AsyncMock(side_effect=TibberConnectionError("Connection lost"))
+    mock_api.execute_query_blocks = AsyncMock(side_effect=TibberConnectionError("Connection lost"))
 
     with pytest.raises(UpdateFailed, match="Error communicating with Tibber API"):
         await coordinator._async_update_data()
 
-    mock_api.get_battery_details = AsyncMock(side_effect=RuntimeError("Unexpected crash"))
+    mock_api.execute_query_blocks = AsyncMock(side_effect=RuntimeError("Unexpected crash"))
     with pytest.raises(UpdateFailed, match="Unexpected error updating battery data"):
         await coordinator._async_update_data()
 

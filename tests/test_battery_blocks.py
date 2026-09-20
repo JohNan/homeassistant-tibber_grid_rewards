@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from custom_components.tibber_grid_reward.battery_blocks import (
     BatteryDataBlock,
+    BatteryPlannedBlock,
     BatteryQueryComposer,
     BatterySavingsBlock,
     GraphQLQueryBlock,
@@ -203,7 +204,7 @@ async def test_coordinator_with_custom_block(hass):
         ]
     )
 
-    api.get_battery_details = AsyncMock(
+    api.execute_query_blocks = AsyncMock(
         return_value={
             "savings": {"TODAY": {"value": 20.0}},
             "activity": [],
@@ -409,3 +410,85 @@ async def test_coordinator_with_blocks_sequence(hass):
     await coordinator.async_refresh()
     assert len(coordinator.composer.blocks) == 2
     assert coordinator.data["savings"]["TODAY"]["value"] == 10.0
+
+
+def test_query_composer_null_data_handling():
+    """Test parse_response handles null or missing data without raising TypeError."""
+    composer = BatteryQueryComposer()
+    res_null = composer.parse_response({"data": None, "errors": [{"message": "Unauthorized"}]})
+    assert res_null["savings"] == {}
+    assert res_null["activity"] == []
+    assert res_null["planned"] == []
+
+    res_empty_str = composer.parse_response("not-a-dict")  # type: ignore[arg-type]
+    assert res_empty_str["savings"] == {}
+
+
+def test_query_composer_variable_normalization():
+    """Test build_query prepends $ to variable definitions and build_variables strips $ from keys."""
+    class CustomVarBlock(GraphQLQueryBlock):
+        name = "custom_var"
+        def get_variable_definitions(self):
+            return {"unprefixed": "String!", "$prefixed": "Int!"}
+
+        def get_variables(self, now, home_id, device_id=None, **kwargs):
+            return {"$prefixed": 42, "unprefixed": "value"}
+
+        def get_query_fragment(self):
+            return "customVar(p: $prefixed, u: $unprefixed)"
+
+        def parse_response(self, root_data):
+            return root_data.get("customVar")
+
+    composer = GraphQLQueryComposer(blocks=[CustomVarBlock()], root_field="")
+    query = composer.build_query()
+    assert "$unprefixed: String!" in query
+    assert "$prefixed: Int!" in query
+
+    now = datetime.now(timezone.utc)
+    variables = composer.build_variables(now, home_id="home_1")
+    assert variables.get("prefixed") == 42
+    assert variables.get("unprefixed") == "value"
+    assert "$prefixed" not in variables
+
+
+def test_battery_blocks_malformed_items():
+    """Test that malformed items with null keys or times are cleanly ignored."""
+    savings_block = BatterySavingsBlock()
+    parsed_savings = savings_block.parse_response({
+        "battery": {
+            "aggregatedHistory": {
+                "periods": [
+                    None,
+                    {"key": None, "batteryValueItems": [{"kind": "TOTAL", "value": 1.0}]},
+                    {"key": "TODAY", "batteryValueItems": [{"kind": "TOTAL", "value": 15.0}]},
+                ]
+            }
+        }
+    })
+    assert None not in parsed_savings
+    assert parsed_savings["TODAY"]["value"] == 15.0
+
+    planned_block = BatteryPlannedBlock()
+    parsed_planned = planned_block.parse_response({
+        "batteryTimeline": {
+            "energyFlow": {
+                "items": [
+                    None,
+                    {"time": None, "charged": 1000},
+                    {"time": "2026-09-20T10:00:00Z", "kind": "FORECAST", "charged": 2000},
+                ]
+            },
+            "stateOfCharge": {
+                "items": [
+                    None,
+                    {"time": None, "stateOfCharge": 50},
+                    {"time": "2026-09-20T10:00:00Z", "stateOfCharge": 80.0},
+                ]
+            },
+        }
+    })
+    assert len(parsed_planned) == 1
+    assert parsed_planned[0]["time"] == "2026-09-20T10:00:00Z"
+    assert parsed_planned[0]["state_of_charge"] == 80.0
+
