@@ -48,21 +48,26 @@ flowchart TD
 
 ### 1. Adding a Modular GraphQL Query Sensor (`CoordinatorEntity`)
 
-For any data queried through the authenticated Tibber GraphQL endpoint, queries are composed modularly using `GraphQLQueryBlock` (aliased as `BatteryDataBlock` for battery telemetry) and `GraphQLQueryComposer`.
+For any data queried through the authenticated Tibber GraphQL endpoint, queries are composed modularly using `GraphQLQueryBlock` (or inline via `create_query_block`) and `GraphQLQueryComposer`.
+
+Pre-made battery blocks (`BatterySavingsBlock`, `BatteryActivityBlock`, `BatteryPlannedBlock`) are standard query blocks registered into `GLOBAL_QUERY_BLOCK_REGISTRY` under `"savings"`, `"activity"`, and `"planned"`. They are treated identically to any custom or generic query block.
 
 Blocks support configurable GraphQL root targets:
 - `root_field = "me.home"`: Embedded inside `me { home(id: $homeId) { ... } }` (default).
 - `root_field = "home"`: Embedded inside `home(id: $homeId) { ... }`.
 - `root_field = "me"`: Embedded inside `me { ... }`.
 
-#### Step A: Define the Query Fragment & Parser (`query_blocks.py`)
-Subclass `GraphQLQueryBlock` to define GraphQL variable definitions, variable evaluation, query fragments, and response parsing:
+#### Method 1: Subclass `GraphQLQueryBlock` (Structured Pattern)
+Define a dedicated class specifying GraphQL variable definitions, variable evaluation, query fragments, and response parsing:
 
 ```python
+from typing import Any
 from custom_components.tibber_grid_reward.query_blocks import GraphQLQueryBlock
+
 
 class BatteryHealthBlock(GraphQLQueryBlock):
     """Modular block for battery health and diagnostics."""
+
     name = "health"
     root_field = "me.home"
 
@@ -79,37 +84,67 @@ class BatteryHealthBlock(GraphQLQueryBlock):
         return battery.get("health") or {}
 ```
 
-#### Step B: Register the Block
-For battery telemetry, add the block to `DEFAULT_BATTERY_BLOCKS` in `battery_blocks.py` so it is automatically included in the battery coordinator:
+#### Method 2: Inline Factory `create_query_block()` (Lightweight Pattern)
+Instantiate any block dynamically without subclassing:
 
 ```python
-DEFAULT_BATTERY_BLOCKS: tuple[GraphQLQueryBlock, ...] = (
-    BatterySavingsBlock(),
-    BatteryActivityBlock(),
-    BatteryPlannedBlock(),
-    BatteryHealthBlock(),
+from custom_components.tibber_grid_reward.query_blocks import create_query_block
+
+solar_block = create_query_block(
+    name="solar_inverter",
+    query_fragment="solar { currentPower totalEnergy }",
+    parse_fn=lambda d: d.get("solar", {}).get("currentPower"),
 )
 ```
 
-For general non-battery queries (e.g. user profile or multi-home queries), compose an arbitrary query and execute it via `api.execute_query_blocks()`:
+#### Step B: Register the Block (Optional)
+Register your block into `GLOBAL_QUERY_BLOCK_REGISTRY` to reference it anywhere by name:
 
 ```python
-from custom_components.tibber_grid_reward.query_blocks import GraphQLQueryComposer
-
-composer = GraphQLQueryComposer(
-    blocks=[CustomBlock1(), CustomBlock2()],
-    operation_name="GetCustomHomeData",
-    root_field="me.home",
+from custom_components.tibber_grid_reward.query_blocks import (
+    GLOBAL_QUERY_BLOCK_REGISTRY,
 )
-data = await api.execute_query_blocks(composer, home_id=home_id)
-# data["custom_block_1"] is now parsed and accessible
+
+GLOBAL_QUERY_BLOCK_REGISTRY.register(BatteryHealthBlock, "health")
+GLOBAL_QUERY_BLOCK_REGISTRY.register(solar_block)
 ```
 
-#### Step C: Create the Sensor Entity (`sensor.py`)
-Subclass `CoordinatorEntity[TibberBatteryDataCoordinator]` (or any custom `DataUpdateCoordinator`) and read the parsed block data from `self.coordinator.data`:
+#### Step C: Execute Query Blocks
+
+**Option 1: One-Off Single Block Execution**
+```python
+power = await api.execute_block(solar_block, home_id=home_id)
+```
+
+**Option 2: Composed Multi-Block Execution**
+Pass block instances or registered string names directly:
+```python
+results = await api.execute_query_blocks(
+    ["savings", "activity", solar_block], home_id=home_id, device_id=battery_id
+)
+# results["savings"], results["solar_inverter"] are parsed and accessible
+```
+
+**Option 3: Polling Coordinator (`TibberQueryDataCoordinator`)**
+Bind blocks to a coordinator for periodic polling:
+```python
+coordinator = TibberQueryDataCoordinator(
+    hass,
+    api,
+    home_id=home_id,
+    device_id=battery_id,
+    blocks=["savings", "activity", "planned", solar_block],
+)
+await coordinator.async_config_entry_first_refresh()
+```
+
+#### Step D: Create the Sensor Entity (`sensor.py`)
+Subclass `CoordinatorEntity[TibberQueryDataCoordinator]` and read the parsed block data uniformly from `self.coordinator.data`:
 
 ```python
-class BatteryCycleCountSensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
+class BatteryCycleCountSensor(
+    CoordinatorEntity[TibberQueryDataCoordinator], SensorEntity
+):
     def __init__(self, coordinator, entry_id, device, description):
         super().__init__(coordinator)
         self.entity_description = description
@@ -121,8 +156,6 @@ class BatteryCycleCountSensor(CoordinatorEntity[TibberBatteryDataCoordinator], S
         health = self.coordinator.data.get("health") or {}
         return health.get("cycleCount")
 ```
-
-Instantiate the sensor in `async_setup_entry` in `sensor.py` under the `device.get("type") == "battery"` loop.
 
 ---
 

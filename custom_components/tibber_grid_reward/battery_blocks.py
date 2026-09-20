@@ -1,11 +1,16 @@
 """Modular battery telemetry query blocks for Tibber home batteries."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
-from .query_blocks import GraphQLQueryBlock, GraphQLQueryComposer
+from .query_blocks import (
+    GLOBAL_QUERY_BLOCK_REGISTRY,
+    GraphQLQueryBlock,
+    GraphQLQueryComposer,
+)
 
 # Backward compatibility alias
 BatteryDataBlock = GraphQLQueryBlock
@@ -16,7 +21,7 @@ class BatteryQueryComposer(GraphQLQueryComposer):
 
     def __init__(
         self,
-        blocks: Sequence[GraphQLQueryBlock] | None = None,
+        blocks: Sequence[GraphQLQueryBlock | str] | None = None,
         operation_name: str = "GetBatteryDetails",
     ) -> None:
         super().__init__(
@@ -181,9 +186,14 @@ DEFAULT_BATTERY_BLOCKS: tuple[GraphQLQueryBlock, ...] = (
     BatteryPlannedBlock(),
 )
 
+# Register pre-made battery blocks in the global registry
+GLOBAL_QUERY_BLOCK_REGISTRY.register(BatterySavingsBlock, "savings")
+GLOBAL_QUERY_BLOCK_REGISTRY.register(BatteryActivityBlock, "activity")
+GLOBAL_QUERY_BLOCK_REGISTRY.register(BatteryPlannedBlock, "planned")
+
 
 def create_battery_query_composer(
-    blocks: Sequence[GraphQLQueryBlock] | None = None,
+    blocks: Sequence[GraphQLQueryBlock | str] | None = None,
 ) -> GraphQLQueryComposer:
     """Helper to instantiate a composer for battery telemetry."""
     return GraphQLQueryComposer(

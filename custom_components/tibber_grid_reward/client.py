@@ -18,14 +18,18 @@ AUTH_URL = "https://app.tibber.com/v1/login.credentials"
 GRAPHQL_WS_URL = "wss://app.tibber.com/v4/gql/ws"
 GRAPHQL_URL = "https://app.tibber.com/v4/gql"
 
+
 class TibberException(Exception):
     """Base exception for the Tibber API client."""
+
 
 class TibberAuthError(TibberException):
     """Exception for authentication errors."""
 
+
 class TibberConnectionError(TibberException):
     """Exception for connection errors."""
+
 
 class TibberAPI:
     def __init__(self, username: str, password: str, client: httpx.AsyncClient):
@@ -60,12 +64,14 @@ class TibberAPI:
             response = await self._client.post(
                 AUTH_URL,
                 json={"email": self.username, "password": self.password},
-                timeout=10
+                timeout=10,
             )
             response.raise_for_status()
             data: dict[str, Any] = response.json()
             token: str = data.get("token")
-            decoded: dict[str, Any] = jwt.decode(token, options={"verify_signature": False})
+            decoded: dict[str, Any] = jwt.decode(
+                token, options={"verify_signature": False}
+            )
             self._cached_exp = decoded.get("exp", 0)
             self._cached_token = token
             _LOGGER.debug("Successfully fetched new Tibber token.")
@@ -81,7 +87,9 @@ class TibberAPI:
         headers = {"Authorization": f"Bearer {token}"}
         query = "{ me { homes { id title } } }"
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json={"query": query})
+            response = await self._client.post(
+                GRAPHQL_URL, headers=headers, json={"query": query}
+            )
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched Tibber homes.")
             return response.json().get("data", {}).get("me", {}).get("homes", [])
@@ -100,18 +108,10 @@ class TibberAPI:
     ) -> dict[str, Any]:
         """Fetch battery savings, activity history, and planned timeline in one query.
 
-        If a BatteryQueryComposer is provided, query generation, variable generation,
-        and response parsing are delegated to it for modularity.
+        Pre-made battery blocks are executed through the generic execute_query_blocks engine.
         """
         _LOGGER.debug("Fetching combined battery details for battery %s", battery_id)
-        token = await self.fetch_token()
-        headers = {"Authorization": f"Bearer {token}"}
-        now = datetime.now(timezone.utc)
-
-        if composer is not None:
-            query = composer.build_query()
-            variables = composer.build_variables(now, home_id, battery_id)
-        else:
+        if composer is None:
             from .battery_blocks import (
                 BatteryActivityBlock,
                 BatteryPlannedBlock,
@@ -119,29 +119,19 @@ class TibberAPI:
                 BatterySavingsBlock,
             )
 
-            composer = BatteryQueryComposer([
-                BatterySavingsBlock(),
-                BatteryActivityBlock(hours_back=activity_hours_back),
-                BatteryPlannedBlock(days_ahead=days_ahead),
-            ])
-            query = composer.build_query()
-            variables = composer.build_variables(now, home_id, battery_id)
+            composer = BatteryQueryComposer(
+                [
+                    BatterySavingsBlock(),
+                    BatteryActivityBlock(hours_back=activity_hours_back),
+                    BatteryPlannedBlock(days_ahead=days_ahead),
+                ]
+            )
 
-        payload = {
-            "operationName": composer.operation_name,
-            "variables": variables,
-            "query": query,
-        }
-        try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json().get("data") or {}
-        except httpx.HTTPStatusError as e:
-            raise TibberConnectionError from e
-        except Exception as e:
-            raise TibberException from e
-
-        return composer.parse_response(data)
+        return await self.execute_query_blocks(
+            composer=composer,
+            home_id=home_id,
+            device_id=battery_id,
+        )
 
     async def execute_query_blocks(
         self,
@@ -150,21 +140,32 @@ class TibberAPI:
         device_id: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Execute arbitrary modular GraphQL queries composed via GraphQLQueryComposer."""
+        """Execute arbitrary modular GraphQL queries composed via GraphQLQueryComposer or sequence of blocks."""
+        from .query_blocks import GraphQLQueryComposer
+
+        if hasattr(composer, "build_query") and hasattr(composer, "parse_response"):
+            comp = composer
+        elif isinstance(composer, (list, tuple, set)):
+            comp = GraphQLQueryComposer(blocks=composer)
+        else:
+            comp = GraphQLQueryComposer(blocks=[composer])
+
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
         now = datetime.now(timezone.utc)
 
-        query = composer.build_query()
-        variables = composer.build_variables(now, home_id, device_id=device_id, **kwargs)
+        query = comp.build_query()
+        variables = comp.build_variables(now, home_id, device_id=device_id, **kwargs)
 
         payload = {
-            "operationName": composer.operation_name,
+            "operationName": comp.operation_name,
             "variables": variables,
             "query": query,
         }
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response = await self._client.post(
+                GRAPHQL_URL, headers=headers, json=payload
+            )
             response.raise_for_status()
             data = response.json().get("data") or {}
         except httpx.HTTPStatusError as e:
@@ -172,17 +173,37 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-        return composer.parse_response(data)
+        return comp.parse_response(data)
 
+    async def execute_block(
+        self,
+        block: Any,
+        home_id: str,
+        device_id: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a single modular GraphQL query block and return its parsed output directly."""
+        res = await self.execute_query_blocks(
+            composer=[block],
+            home_id=home_id,
+            device_id=device_id,
+            **kwargs,
+        )
+        return next(iter(res.values())) if res else None
 
-
-    async def get_battery_savings(self, home_id: str, battery_id: str) -> dict[str, Any]:
+    async def get_battery_savings(
+        self, home_id: str, battery_id: str
+    ) -> dict[str, Any]:
         """Fetch aggregated battery savings (kept for backwards compatibility)."""
         details = await self.get_battery_details(home_id, battery_id)
         return details.get("savings", {})
 
-    async def set_smart_charging_enabled(self, home_id: str, vehicle_id: str, enabled: bool) -> None:
-        _LOGGER.debug("Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id)
+    async def set_smart_charging_enabled(
+        self, home_id: str, vehicle_id: str, enabled: bool
+    ) -> None:
+        _LOGGER.debug(
+            "Setting smart charging enabled to %s for vehicle %s", enabled, vehicle_id
+        )
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
         payload_online = {
@@ -190,10 +211,9 @@ class TibberAPI:
             "variables": {
                 "vehicleId": vehicle_id,
                 "homeId": home_id,
-                "settings": [{
-                    "key": "online.vehicle.smartCharging.isEnabled",
-                    "value": enabled
-                }]
+                "settings": [
+                    {"key": "online.vehicle.smartCharging.isEnabled", "value": enabled}
+                ],
             },
             "query": """
             mutation SetVehicleSettings($vehicleId: String!, $homeId: String!, $settings: [SettingsItemInput!]) {
@@ -203,10 +223,12 @@ class TibberAPI:
                 }
               }
             }
-            """
+            """,
         }
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_online)
+            response = await self._client.post(
+                GRAPHQL_URL, headers=headers, json=payload_online
+            )
             response.raise_for_status()
             res_json = response.json()
             if res_json.get("errors"):
@@ -216,14 +238,18 @@ class TibberAPI:
                     "variables": {
                         "vehicleId": vehicle_id,
                         "homeId": home_id,
-                        "settings": [{
-                            "key": "offline.vehicle.smartCharging.isEnabled",
-                            "value": enabled
-                        }]
+                        "settings": [
+                            {
+                                "key": "offline.vehicle.smartCharging.isEnabled",
+                                "value": enabled,
+                            }
+                        ],
                     },
-                    "query": payload_online["query"]
+                    "query": payload_online["query"],
                 }
-                response_offline = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_offline)
+                response_offline = await self._client.post(
+                    GRAPHQL_URL, headers=headers, json=payload_offline
+                )
                 response_offline.raise_for_status()
             _LOGGER.debug("Successfully updated smart charging setting.")
         except httpx.HTTPStatusError as e:
@@ -235,7 +261,7 @@ class TibberAPI:
         _LOGGER.debug("Validating grid reward for home: %s", home_id)
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
-        
+
         try:
             ssl_context = await self._get_ssl_context()
             async with websockets.connect(
@@ -256,17 +282,23 @@ class TibberAPI:
 
                 if data.get("type") == "next":
                     _LOGGER.debug("Successfully validated grid reward.")
-                    return data.get("payload", {}).get("data", {}).get("gridRewardStatus")
+                    return (
+                        data.get("payload", {}).get("data", {}).get("gridRewardStatus")
+                    )
                 return None
         except (asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
             raise TibberConnectionError from e
         except Exception as e:
             raise TibberException from e
 
-    def register_grid_reward_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
+    def register_grid_reward_callback(
+        self, callback: Callable[[dict[str, Any]], None]
+    ) -> None:
         self._sub_callback = callback
 
-    def register_vehicle_callback(self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]) -> None:
+    def register_vehicle_callback(
+        self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]
+    ) -> None:
         self._vehicle_callbacks[vehicle_id] = callback
 
     async def subscribe_grid_reward(self, home_id: str) -> None:
@@ -287,7 +319,7 @@ class TibberAPI:
                     ) as websocket:
                         self._websocket = websocket
                         await websocket.send(json.dumps({"type": "connection_init"}))
-                        
+
                         current_sub_id: str | None = None
                         while True:
                             msg = await websocket.recv()
@@ -296,27 +328,49 @@ class TibberAPI:
                             if data.get("type") == "connection_ack":
                                 _LOGGER.debug("Websocket connection acknowledged.")
                                 current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = self._build_grid_reward_subscribe_message(self.home_id, current_sub_id)
+                                subscribe_msg = (
+                                    self._build_grid_reward_subscribe_message(
+                                        self.home_id, current_sub_id
+                                    )
+                                )
                                 await websocket.send(json.dumps(subscribe_msg))
                             elif data.get("type") == "next":
-                                reward_data = data.get("payload", {}).get("data", {}).get("gridRewardStatus")
+                                reward_data = (
+                                    data.get("payload", {})
+                                    .get("data", {})
+                                    .get("gridRewardStatus")
+                                )
                                 _LOGGER.debug("Grid reward data received: %s", data)
                                 if reward_data and self._sub_callback:
                                     self._sub_callback(reward_data)
-                            elif data.get("type") == "complete" and data.get("id") == current_sub_id:
+                            elif (
+                                data.get("type") == "complete"
+                                and data.get("id") == current_sub_id
+                            ):
                                 current_sub_id = str(uuid.uuid4())
                                 _LOGGER.debug("Subscription complete, re-subscribing.")
-                                subscribe_msg = self._build_grid_reward_subscribe_message(self.home_id, current_sub_id)
+                                subscribe_msg = (
+                                    self._build_grid_reward_subscribe_message(
+                                        self.home_id, current_sub_id
+                                    )
+                                )
                                 await websocket.send(json.dumps(subscribe_msg))
-                            #else:
+                            # else:
                             #    _LOGGER.debug("Grid reward data received: %s", data)
-                except (websockets.exceptions.ConnectionClosedError, websockets.exceptions.ConnectionClosedOK):
+                except (
+                    websockets.exceptions.ConnectionClosedError,
+                    websockets.exceptions.ConnectionClosedOK,
+                ):
                     if not self._ws_reconnect:
                         break
-                    _LOGGER.warning("Websocket connection closed, reconnecting in 5 seconds.")
+                    _LOGGER.warning(
+                        "Websocket connection closed, reconnecting in 5 seconds."
+                    )
                 except Exception:
-                    _LOGGER.exception("Error in websocket subscription, reconnecting in 5 seconds.")
-                
+                    _LOGGER.exception(
+                        "Error in websocket subscription, reconnecting in 5 seconds."
+                    )
+
                 if self._ws_reconnect:
                     await asyncio.sleep(5)
         except asyncio.CancelledError:
@@ -325,7 +379,9 @@ class TibberAPI:
 
     async def subscribe_vehicle_state(self, vehicle_id: str) -> None:
         self._ws_reconnect = True
-        _LOGGER.info("Starting Tibber vehicle state websocket subscription for %s.", vehicle_id)
+        _LOGGER.info(
+            "Starting Tibber vehicle state websocket subscription for %s.", vehicle_id
+        )
         try:
             while self._ws_reconnect:
                 try:
@@ -340,7 +396,7 @@ class TibberAPI:
                     ) as websocket:
                         self._websocket = websocket
                         await websocket.send(json.dumps({"type": "connection_init"}))
-                        
+
                         current_sub_id: str | None = None
                         while True:
                             msg = await websocket.recv()
@@ -349,32 +405,58 @@ class TibberAPI:
                             if data.get("type") == "connection_ack":
                                 _LOGGER.debug("Websocket connection acknowledged.")
                                 current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = self._build_vehicle_state_subscribe_message(vehicle_id, current_sub_id)
+                                subscribe_msg = (
+                                    self._build_vehicle_state_subscribe_message(
+                                        vehicle_id, current_sub_id
+                                    )
+                                )
                                 await websocket.send(json.dumps(subscribe_msg))
                             elif data.get("type") == "next":
                                 _LOGGER.debug("Vehicle state data received: %s", data)
-                                vehicle_data = data.get("payload", {}).get("data", {}).get("vehicleState")
-                                if vehicle_data and self._vehicle_callbacks.get(vehicle_id):
+                                vehicle_data = (
+                                    data.get("payload", {})
+                                    .get("data", {})
+                                    .get("vehicleState")
+                                )
+                                if vehicle_data and self._vehicle_callbacks.get(
+                                    vehicle_id
+                                ):
                                     self._vehicle_callbacks[vehicle_id](vehicle_data)
-                            elif data.get("type") == "complete" and data.get("id") == current_sub_id:
+                            elif (
+                                data.get("type") == "complete"
+                                and data.get("id") == current_sub_id
+                            ):
                                 _LOGGER.debug("Subscription complete, re-subscribing.")
                                 current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = self._build_vehicle_state_subscribe_message(vehicle_id, current_sub_id)
+                                subscribe_msg = (
+                                    self._build_vehicle_state_subscribe_message(
+                                        vehicle_id, current_sub_id
+                                    )
+                                )
                                 await websocket.send(json.dumps(subscribe_msg))
-                except (websockets.exceptions.ConnectionClosedError, websockets.exceptions.ConnectionClosedOK):
+                except (
+                    websockets.exceptions.ConnectionClosedError,
+                    websockets.exceptions.ConnectionClosedOK,
+                ):
                     if not self._ws_reconnect:
                         break
-                    _LOGGER.warning("Websocket connection closed, reconnecting in 5 seconds.")
+                    _LOGGER.warning(
+                        "Websocket connection closed, reconnecting in 5 seconds."
+                    )
                 except Exception:
-                    _LOGGER.exception("Error in websocket subscription, reconnecting in 5 seconds.")
-                
+                    _LOGGER.exception(
+                        "Error in websocket subscription, reconnecting in 5 seconds."
+                    )
+
                 if self._ws_reconnect:
                     await asyncio.sleep(5)
         except asyncio.CancelledError:
             _LOGGER.info("Tibber websocket subscription task cancelled.")
             raise
 
-    def _build_grid_reward_subscribe_message(self, home_id: str, sub_id: str) -> dict[str, Any]:
+    def _build_grid_reward_subscribe_message(
+        self, home_id: str, sub_id: str
+    ) -> dict[str, Any]:
         return {
             "type": "subscribe",
             "id": sub_id,
@@ -425,11 +507,13 @@ class TibberAPI:
                     ... on GridRewardBattery { __typename ...gridRewardBattery }
                   }
                 }
-                """
-            }
+                """,
+            },
         }
 
-    def _build_vehicle_state_subscribe_message(self, vehicle_id: str, sub_id: str) -> dict[str, Any]:
+    def _build_vehicle_state_subscribe_message(
+        self, vehicle_id: str, sub_id: str
+    ) -> dict[str, Any]:
         return {
             "type": "subscribe",
             "id": sub_id,
@@ -464,12 +548,19 @@ class TibberAPI:
                     ...setting
                   }
                 }
-                """
-            }
+                """,
+            },
         }
-    
-    async def set_departure_time(self, home_id: str, vehicle_id: str, day: str, time_str: str | None) -> None:
-        _LOGGER.debug("Setting departure time for vehicle %s to %s on %s", vehicle_id, time_str, day)
+
+    async def set_departure_time(
+        self, home_id: str, vehicle_id: str, day: str, time_str: str | None
+    ) -> None:
+        _LOGGER.debug(
+            "Setting departure time for vehicle %s to %s on %s",
+            vehicle_id,
+            time_str,
+            day,
+        )
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
         payload = {
@@ -477,10 +568,12 @@ class TibberAPI:
             "variables": {
                 "vehicleId": vehicle_id,
                 "homeId": home_id,
-                "settings": [{
-                    "key": f"online.vehicle.smartCharging.departureTimes.{day.lower()}",
-                    "value": time_str
-                }]
+                "settings": [
+                    {
+                        "key": f"online.vehicle.smartCharging.departureTimes.{day.lower()}",
+                        "value": time_str,
+                    }
+                ],
             },
             "query": """
             mutation SetVehicleSettings($vehicleId: String!, $homeId: String!, $settings: [SettingsItemInput!]) {
@@ -490,10 +583,12 @@ class TibberAPI:
                 }
               }
             }
-            """
+            """,
         }
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response = await self._client.post(
+                GRAPHQL_URL, headers=headers, json=payload
+            )
             response.raise_for_status()
             res_json = response.json()
             if res_json.get("errors"):
@@ -502,14 +597,18 @@ class TibberAPI:
                     "variables": {
                         "vehicleId": vehicle_id,
                         "homeId": home_id,
-                        "settings": [{
-                            "key": f"offline.vehicle.departureTimes.{day.lower()}",
-                            "value": time_str
-                        }]
+                        "settings": [
+                            {
+                                "key": f"offline.vehicle.departureTimes.{day.lower()}",
+                                "value": time_str,
+                            }
+                        ],
                     },
-                    "query": payload["query"]
+                    "query": payload["query"],
                 }
-                response_offline = await self._client.post(GRAPHQL_URL, headers=headers, json=payload_offline)
+                response_offline = await self._client.post(
+                    GRAPHQL_URL, headers=headers, json=payload_offline
+                )
                 response_offline.raise_for_status()
             _LOGGER.debug("Successfully set departure time.")
         except httpx.HTTPStatusError as e:
@@ -517,7 +616,9 @@ class TibberAPI:
         except Exception as e:
             raise TibberException from e
 
-    async def set_battery_level(self, home_id: str, vehicle_id: str, level: int) -> None:
+    async def set_battery_level(
+        self, home_id: str, vehicle_id: str, level: int
+    ) -> None:
         """Set the assumed/manual battery level for an offline vehicle.
 
         Confirmed (live write-then-readback test, 2026-08-16) only against an
@@ -535,10 +636,9 @@ class TibberAPI:
             "variables": {
                 "vehicleId": vehicle_id,
                 "homeId": home_id,
-                "settings": [{
-                    "key": "offline.vehicle.batteryLevel",
-                    "value": str(level)
-                }]
+                "settings": [
+                    {"key": "offline.vehicle.batteryLevel", "value": str(level)}
+                ],
             },
             "query": """
             mutation SetVehicleSettings($vehicleId: String!, $homeId: String!, $settings: [SettingsItemInput!]) {
@@ -548,10 +648,12 @@ class TibberAPI:
                 }
               }
             }
-            """
+            """,
         }
         try:
-            response = await self._client.post(GRAPHQL_URL, headers=headers, json=payload)
+            response = await self._client.post(
+                GRAPHQL_URL, headers=headers, json=payload
+            )
             response.raise_for_status()
             _LOGGER.debug("Successfully set battery level.")
         except httpx.HTTPStatusError as e:

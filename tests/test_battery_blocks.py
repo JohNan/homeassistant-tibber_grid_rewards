@@ -1,4 +1,5 @@
 """Tests for modular GraphQL query blocks and GraphQLQueryComposer."""
+
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -80,7 +81,10 @@ def test_battery_query_composer_defaults():
     assert "$activityFrom: DateTime!" in query
     assert "$timelineFrom: DateTime!" in query
     assert "battery(id: $deviceId)" in query
-    assert "batteryActivityHistory(id: $deviceId, from: $activityFrom, to: $activityTo)" in query
+    assert (
+        "batteryActivityHistory(id: $deviceId, from: $activityFrom, to: $activityTo)"
+        in query
+    )
     assert "batteryTimeline(" in query
 
 
@@ -107,15 +111,25 @@ def test_battery_query_composer_add_custom_block():
                             "periods": [
                                 {
                                     "key": "TODAY",
-                                    "batteryValueItems": [{"value": 10.5, "unit": "NOK", "kind": "TOTAL"}],
+                                    "batteryValueItems": [
+                                        {"value": 10.5, "unit": "NOK", "kind": "TOTAL"}
+                                    ],
                                 }
                             ]
                         }
                     },
-                    "batteryActivityHistory": {"items": [{"from": "2026-09-19T10:00:00Z"}]},
+                    "batteryActivityHistory": {
+                        "items": [{"from": "2026-09-19T10:00:00Z"}]
+                    },
                     "batteryTimeline": {
-                        "energyFlow": {"items": [{"time": "2026-09-19T12:00:00Z", "charged": 1000}]},
-                        "stateOfCharge": {"items": [{"time": "2026-09-19T12:00:00Z", "stateOfCharge": 55.0}]},
+                        "energyFlow": {
+                            "items": [{"time": "2026-09-19T12:00:00Z", "charged": 1000}]
+                        },
+                        "stateOfCharge": {
+                            "items": [
+                                {"time": "2026-09-19T12:00:00Z", "stateOfCharge": 55.0}
+                            ]
+                        },
                     },
                     "customTelemetry": {"status": "ACTIVE"},
                 }
@@ -182,10 +196,12 @@ def test_tibber_battery_data_access():
 async def test_coordinator_with_custom_block(hass):
     """Test TibberBatteryDataCoordinator populates extra block in data."""
     api = MagicMock(spec=TibberAPI)
-    composer = BatteryQueryComposer([
-        BatterySavingsBlock(),
-        CustomTestBlock(),
-    ])
+    composer = BatteryQueryComposer(
+        [
+            BatterySavingsBlock(),
+            CustomTestBlock(),
+        ]
+    )
 
     api.get_battery_details = AsyncMock(
         return_value={
@@ -210,3 +226,186 @@ async def test_coordinator_with_custom_block(hass):
     assert coordinator.data.get("custom_test") == "TEST_DATA_OK"
     assert coordinator.data["custom_test"] == "TEST_DATA_OK"
     assert coordinator.data.extra["custom_test"] == "TEST_DATA_OK"
+
+
+def test_tibber_block_data_uniformity():
+    """Verify pre-made battery blocks and custom blocks are treated identically."""
+    raw = {
+        "savings": {"TODAY": {"value": 50}},
+        "activity": [{"from": "now"}],
+        "planned": [{"kind": "FORECAST"}],
+        "solar_stats": {"generated_kwh": 12.5},
+        "grid_metrics": {"voltage": 230},
+    }
+    block_data = TibberBatteryData(raw)
+
+    # All blocks are accessible via get()
+    assert block_data.get("savings") == {"TODAY": {"value": 50}}
+    assert block_data.get("solar_stats") == {"generated_kwh": 12.5}
+    assert block_data.get("grid_metrics") == {"voltage": 230}
+    assert block_data.get("missing", 999) == 999
+
+    # All blocks are accessible via dict subscription
+    assert block_data["savings"] == {"TODAY": {"value": 50}}
+    assert block_data["solar_stats"] == {"generated_kwh": 12.5}
+    assert block_data["grid_metrics"] == {"voltage": 230}
+
+    # All blocks are accessible via attribute access
+    assert block_data.savings == {"TODAY": {"value": 50}}
+    assert block_data.solar_stats == {"generated_kwh": 12.5}
+    assert block_data.grid_metrics == {"voltage": 230}
+
+    # Membership and iteration
+    assert "savings" in block_data
+    assert "solar_stats" in block_data
+    assert "nonexistent" not in block_data
+    assert set(block_data) == {
+        "savings",
+        "activity",
+        "planned",
+        "solar_stats",
+        "grid_metrics",
+    }
+    assert len(block_data) == 5
+    assert bool(block_data) is True
+
+    # Equality with another container or dict
+    assert block_data == TibberBatteryData(raw)
+    assert block_data == raw
+
+    # Empty container
+    empty = TibberBatteryData()
+    assert bool(empty) is False
+    assert len(empty) == 0
+    assert empty.savings == {}
+    assert empty.activity == []
+    assert empty.planned == []
+
+
+async def test_coordinator_execute_query_blocks_path(hass):
+    """Test TibberQueryDataCoordinator executing via execute_query_blocks on api."""
+    mock_api = MagicMock()
+    mock_api.execute_query_blocks = AsyncMock(
+        return_value={
+            "savings": {"TODAY": {"value": 35.0}},
+            "activity": [],
+            "planned": [],
+            "custom_block": {"status": "ACTIVE"},
+        }
+    )
+
+    coordinator = TibberBatteryDataCoordinator(
+        hass=hass,
+        api=mock_api,
+        home_id="home_1",
+        battery_id="bat_1",
+    )
+
+    await coordinator.async_refresh()
+
+    mock_api.execute_query_blocks.assert_awaited_once_with(
+        coordinator.composer,
+        "home_1",
+        device_id="bat_1",
+    )
+    assert coordinator.data["savings"]["TODAY"]["value"] == 35.0
+    assert coordinator.data["custom_block"] == {"status": "ACTIVE"}
+    assert coordinator.data.custom_block == {"status": "ACTIVE"}
+
+
+def test_generic_query_block_factory():
+    """Test creating query blocks via GenericQueryBlock and create_query_block."""
+    from custom_components.tibber_grid_reward.query_blocks import (
+        GenericQueryBlock,
+        create_query_block,
+    )
+
+    block = create_query_block(
+        name="solar_inverter",
+        query_fragment="solar { currentPower totalEnergy }",
+        parse_fn=lambda d: d.get("solar", {}).get("currentPower"),
+        variable_definitions={"$solarFilter": "Boolean!"},
+        variables_fn=lambda **kwargs: {"solarFilter": True},
+    )
+
+    assert isinstance(block, GenericQueryBlock)
+    assert block.name == "solar_inverter"
+    assert block.get_query_fragment() == "solar { currentPower totalEnergy }"
+    assert block.get_variable_definitions() == {"$solarFilter": "Boolean!"}
+    assert block.get_variables(datetime.now(timezone.utc), "home1") == {
+        "solarFilter": True
+    }
+    assert block.parse_response({"solar": {"currentPower": 3200}}) == 3200
+
+
+def test_query_block_registry():
+    """Test registry operations: register, retrieve, list, and error handling."""
+    import pytest
+
+    from custom_components.tibber_grid_reward.query_blocks import (
+        GLOBAL_QUERY_BLOCK_REGISTRY,
+        QueryBlockRegistry,
+        create_query_block,
+    )
+
+    registry = QueryBlockRegistry()
+    test_block = create_query_block("test_sensor", "sensor { val }")
+
+    # Register instance
+    registry.register(test_block)
+    assert "test_sensor" in registry
+    assert registry.get("test_sensor") is test_block
+    assert registry.get_or_create(test_block) is test_block
+    assert registry.get_or_create("test_sensor") is test_block
+    assert "test_sensor" in registry.list_blocks()
+
+    # Pre-made battery blocks are in global registry
+    assert "savings" in GLOBAL_QUERY_BLOCK_REGISTRY
+    assert "activity" in GLOBAL_QUERY_BLOCK_REGISTRY
+    assert "planned" in GLOBAL_QUERY_BLOCK_REGISTRY
+
+    # Missing block error
+    with pytest.raises(KeyError, match="not registered"):
+        registry.get("nonexistent_block")
+
+    # Anonymous block error
+    with pytest.raises(ValueError, match="must specify a name"):
+        registry.register(object())
+
+
+def test_composer_with_string_block_names():
+    """Test composing queries using string block names resolved from registry."""
+    from custom_components.tibber_grid_reward.query_blocks import (
+        create_query_composer,
+    )
+
+    composer = create_query_composer(blocks=["savings", "activity"])
+    assert len(composer.blocks) == 2
+    assert [b.name for b in composer.blocks] == ["savings", "activity"]
+
+    query = composer.build_query()
+    assert "battery(id: $deviceId)" in query
+    assert "batteryActivityHistory" in query
+
+
+async def test_coordinator_with_blocks_sequence(hass):
+    """Test initializing coordinator directly with a sequence of block names."""
+    mock_api = MagicMock()
+    mock_api.execute_query_blocks = AsyncMock(
+        return_value={
+            "savings": {"TODAY": {"value": 10.0}},
+            "activity": [],
+        }
+    )
+
+    coordinator = TibberBatteryDataCoordinator(
+        hass=hass,
+        api=mock_api,
+        home_id="home_1",
+        battery_id="bat_1",
+        blocks=["savings", "activity"],
+    )
+
+    await coordinator.async_refresh()
+    assert len(coordinator.composer.blocks) == 2
+    assert coordinator.data["savings"]["TODAY"]["value"] == 10.0
