@@ -182,7 +182,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             battery_coordinators = entry_data.setdefault("battery_coordinators", {})
             if battery_id not in battery_coordinators:
                 coordinator = TibberBatteryDataCoordinator(
-                    hass, api, config_entry.data["home_id"], battery_id
+                    hass,
+                    api,
+                    config_entry.data["home_id"],
+                    battery_id,
+                    config_entry=config_entry,
                 )
                 battery_coordinators[battery_id] = coordinator
             else:

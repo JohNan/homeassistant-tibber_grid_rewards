@@ -88,9 +88,6 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
-            await self.async_set_unique_id(user_input[CONF_USERNAME])
-            self._abort_if_unique_id_configured()
-
             self.data[CONF_USERNAME] = user_input[CONF_USERNAME]
             self.data[CONF_PASSWORD] = user_input[CONF_PASSWORD]
             self.data[CONF_API_KEY] = user_input[CONF_API_KEY]
@@ -98,6 +95,19 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 errors = await self._validate_credentials()
                 if not errors:
+                    configured_home_ids = {
+                        entry.data.get("home_id")
+                        for entry in self._async_current_entries()
+                        if entry.data.get(CONF_USERNAME) == self.data[CONF_USERNAME]
+                    }
+                    available_homes = {
+                        hid: title
+                        for hid, title in self.homes.items()
+                        if hid not in configured_home_ids
+                    }
+                    if not available_homes:
+                        return self.async_abort(reason="already_configured")
+                    self.homes = available_homes
                     return await self.async_step_select_home()
             except NoHomesFound as e:
                 return self.async_abort(reason=e.reason)
@@ -117,6 +127,10 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_select_home(self, user_input=None):
         if user_input is not None:
             self.data["home_id"] = user_input["home_id"]
+            await self.async_set_unique_id(
+                f"{self.data[CONF_USERNAME]}_{self.data['home_id']}"
+            )
+            self._abort_if_unique_id_configured()
             _LOGGER.debug("Home selected: %s", self.data["home_id"])
             return await self.async_step_validate_grid_reward()
 
@@ -195,7 +209,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return await self.async_step_select_devices()
 
     async def async_step_select_devices(self, user_input=None):
-        if user_input is not None:
+        if user_input is not None and "flex_devices" in user_input:
             self.data["flex_devices"] = [
                 {
                     "id": dev_id,

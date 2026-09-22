@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -195,6 +195,7 @@ def mock_config_entry():
         "flex_devices": [],
     }
     entry.options = {}
+    entry.state = ConfigEntryState.SETUP_IN_PROGRESS
     return entry
 
 
