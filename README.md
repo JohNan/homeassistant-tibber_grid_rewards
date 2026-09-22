@@ -208,7 +208,10 @@ For sensors fetching third-party or unauthenticated data (like Tibber electricit
 
 ## Configuration
 
-The integration is configured through the Home Assistant UI. You will need to provide your Tibber username and password.
+The integration is configured through the Home Assistant UI. You will need to provide:
+
+- **Username and Password**: Your Tibber account credentials used to log into the Tibber mobile app.
+- **API Key (Access Token)**: Used to fetch electricity prices and account data from the Tibber API. You can generate or retrieve your personal access token at [developer.tibber.com/settings/access-token](https://developer.tibber.com/settings/access-token) by logging in with your Tibber credentials.
 
 ## Services
 
