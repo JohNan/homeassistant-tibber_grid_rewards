@@ -29,28 +29,48 @@ MOCK_FLEX_DEVICES = {
     "flex2": {"type": "battery", "name": "Battery"},
 }
 
+
 @pytest.fixture(name="mock_tibber_api")
 def mock_tibber_api_fixture():
     """Mock the TibberAPI client."""
-    with patch("custom_components.tibber_grid_reward.config_flow.TibberAPI") as mock_api:
+    with patch(
+        "custom_components.tibber_grid_reward.config_flow.TibberAPI"
+    ) as mock_api:
         instance = mock_api.return_value
         instance.get_homes = AsyncMock(return_value=MOCK_HOMES)
-        instance.validate_grid_reward = AsyncMock(return_value={"flexDevices": [
-            {"__typename": "GridRewardVehicle", "vehicleId": "flex1", "shortName": "Car 1"},
-            {"__typename": "GridRewardBattery", "batteryId": "flex2", "shortName": "Battery"},
-        ]})
+        instance.validate_grid_reward = AsyncMock(
+            return_value={
+                "flexDevices": [
+                    {
+                        "__typename": "GridRewardVehicle",
+                        "vehicleId": "flex1",
+                        "shortName": "Car 1",
+                    },
+                    {
+                        "__typename": "GridRewardBattery",
+                        "batteryId": "flex2",
+                        "shortName": "Battery",
+                    },
+                ]
+            }
+        )
         yield mock_api
+
 
 @pytest.fixture(name="mock_tibber_public_api")
 def mock_tibber_public_api_fixture():
     """Mock the TibberPublicAPI client."""
-    with patch("custom_components.tibber_grid_reward.config_flow.TibberPublicAPI") as mock_public_api:
+    with patch(
+        "custom_components.tibber_grid_reward.config_flow.TibberPublicAPI"
+    ) as mock_public_api:
         public_instance = mock_public_api.return_value
         public_instance.get_homes = AsyncMock(return_value=MOCK_HOMES)
         yield mock_public_api
 
 
-async def test_reauth_flow_success(hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api):
+async def test_reauth_flow_success(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
     """Test the reauthentication flow succeeds with valid credentials."""
     mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA)
     mock_entry.add_to_hass(hass)
@@ -66,7 +86,9 @@ async def test_reauth_flow_success(hass: HomeAssistant, mock_tibber_api, mock_ti
     new_password = "new_password"
     new_api_key = "new_api_key"
 
-    with patch("custom_components.tibber_grid_reward.async_setup_entry", return_value=True) as mock_setup_entry:
+    with patch(
+        "custom_components.tibber_grid_reward.async_setup_entry", return_value=True
+    ) as mock_setup_entry:
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
@@ -82,7 +104,10 @@ async def test_reauth_flow_success(hass: HomeAssistant, mock_tibber_api, mock_ti
     assert mock_entry.data["api_key"] == new_api_key
     assert len(mock_setup_entry.mock_calls) == 1
 
-async def test_reauth_flow_invalid_creds(hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api):
+
+async def test_reauth_flow_invalid_creds(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
     """Test the reauthentication flow fails with invalid credentials."""
     mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA)
     mock_entry.add_to_hass(hass)
@@ -105,12 +130,17 @@ async def test_reauth_flow_invalid_creds(hass: HomeAssistant, mock_tibber_api, m
     assert result2["step_id"] == "reauth"
     assert result2["errors"] == {"base": "auth"}
 
-async def test_reconfigure_flow(hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api):
+
+async def test_reconfigure_flow(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
     """Test the reconfiguration flow to update flex devices."""
     mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA)
     mock_entry.add_to_hass(hass)
 
-    with patch("custom_components.tibber_grid_reward.async_setup_entry", return_value=True):
+    with patch(
+        "custom_components.tibber_grid_reward.async_setup_entry", return_value=True
+    ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
         )
@@ -123,7 +153,9 @@ async def test_reconfigure_flow(hass: HomeAssistant, mock_tibber_api, mock_tibbe
     assert key.default() == ["flex1"]
 
     # Simulate user selecting a different set of devices
-    with patch("custom_components.tibber_grid_reward.async_setup_entry", return_value=True) as mock_setup_entry:
+    with patch(
+        "custom_components.tibber_grid_reward.async_setup_entry", return_value=True
+    ) as mock_setup_entry:
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {"flex_devices": ["flex2"]},

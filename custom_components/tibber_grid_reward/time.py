@@ -1,4 +1,5 @@
 """Platform for time integration."""
+
 from __future__ import annotations
 
 import datetime
@@ -42,8 +43,10 @@ async def async_setup_entry(
             for day in range(7):
                 entity = DepartureTimeEntity(api, config_entry.entry_id, device, day)
                 entities.append(entity)
-                hass.data[DOMAIN][config_entry.entry_id]["vehicle_devices"][vehicle_id].append(entity)
-    
+                hass.data[DOMAIN][config_entry.entry_id]["vehicle_devices"][
+                    vehicle_id
+                ].append(entity)
+
     async_add_entities(entities)
 
 
@@ -58,8 +61,18 @@ class DepartureTimeEntity(TimeEntity):
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
         self._day_index = day_index
-        self._day_name = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"][day_index]
-        self._attr_name = f"{self._device_name} Departure Time {self._day_name.capitalize()}"
+        self._day_name = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ][day_index]
+        self._attr_name = (
+            f"{self._device_name} Departure Time {self._day_name.capitalize()}"
+        )
         self._attr_unique_id = f"{self._device_id}_departure_time_{self._day_name}"
         self._attr_native_value = None
 
@@ -100,19 +113,19 @@ class DepartureTimeEntity(TimeEntity):
                 self._attr_native_value = None
         else:
             self._attr_native_value = None
-            
+
         if self.hass is not None:
             self.async_write_ha_state()
 
     async def async_set_value(self, value: datetime.time | None) -> None:
         """Set the departure time."""
         _LOGGER.debug("Setting departure time to %s for %s", value, self.entity_id)
-        
+
         if value == datetime.time(0, 0):
             time_str = None
         else:
             time_str = value.strftime("%H:%M") if value else None
-            
+
         await self._api.set_departure_time(
             home_id=self._home_id,
             vehicle_id=self._device_id,

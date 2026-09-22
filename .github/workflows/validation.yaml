@@ -36,12 +36,14 @@ jobs:
       - name: Set up Python
         uses: "actions/setup-python@v5"
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install dependencies
         run: |
           pip install -r requirements_test.txt
       - name: Run linter
-        run: ruff check .
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
 
   tests:
     name: Tests
@@ -51,7 +53,7 @@ jobs:
       - name: Set up Python
         uses: "actions/setup-python@v5"
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install dependencies
         run: |
           pip install -r requirements_test.txt

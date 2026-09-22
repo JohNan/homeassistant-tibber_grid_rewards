@@ -1,0 +1,22 @@
+[env]
+_.path = [".venv/bin"]
+
+[tasks.lint]
+description = "Run Ruff linter"
+run = "ruff check ."
+
+[tasks."lint:fix"]
+description = "Run Ruff linter with autofix"
+run = "ruff check --fix ."
+
+[tasks."format:check"]
+description = "Check formatting with Ruff"
+run = "ruff format --check ."
+
+[tasks.format]
+description = "Format code with Ruff"
+run = "ruff check --fix . && ruff format ."
+
+[tasks.test]
+description = "Run test suite"
+run = "pytest"

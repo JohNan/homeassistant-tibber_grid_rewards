@@ -150,9 +150,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("Starting grid reward validation.")
         try:
             client = get_async_client(self.hass)
-            api = TibberAPI(
-                self.data[CONF_USERNAME], self.data[CONF_PASSWORD], client
-            )
+            api = TibberAPI(self.data[CONF_USERNAME], self.data[CONF_PASSWORD], client)
             grid_reward_data = await api.validate_grid_reward(self.data["home_id"])
             _LOGGER.debug("Grid reward validation successful.")
 
@@ -292,9 +290,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         device_names = {
             dev_id: info["name"] for dev_id, info in self.flex_devices.items()
         }
-        current_device_ids = [
-            d["id"] for d in self.entry.data.get("flex_devices", [])
-        ]
+        current_device_ids = [d["id"] for d in self.entry.data.get("flex_devices", [])]
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -320,9 +316,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             client = get_async_client(self.hass)
 
             # Validate username/password for private API
-            api = TibberAPI(
-                self.data[CONF_USERNAME], self.data[CONF_PASSWORD], client
-            )
+            api = TibberAPI(self.data[CONF_USERNAME], self.data[CONF_PASSWORD], client)
             homes_data = await api.get_homes()
             _LOGGER.debug("Successfully fetched homes.")
 

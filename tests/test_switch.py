@@ -1,4 +1,5 @@
 """Tests for the Tibber Grid Reward switch platform."""
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -118,7 +119,10 @@ async def test_async_setup_entry(mock_api, device):
         DOMAIN: {
             "test_entry": {
                 "api": mock_api,
-                "flex_devices": [device, {"id": "battery1", "type": "battery", "name": "Battery"}],
+                "flex_devices": [
+                    device,
+                    {"id": "battery1", "type": "battery", "name": "Battery"},
+                ],
                 "grid_reward_devices": [],
                 "vehicle_devices": {"vehicle1": []},
             }

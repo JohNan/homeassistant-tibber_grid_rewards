@@ -1,4 +1,5 @@
 """Tests for device actions."""
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,7 +28,7 @@ async def test_async_get_actions(mock_hass):
 
     mock_registry = MagicMock()
     mock_registry.devices = {}
-    
+
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
             "homeassistant.helpers.entity_registry.async_get",
