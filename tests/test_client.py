@@ -1,5 +1,5 @@
-"""Tests for the Tibber API client."""
-
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -424,3 +424,201 @@ async def test_execute_query_blocks_graphql_error(client: TibberAPI):
         pytest.raises(TibberException, match="GraphQL error executing query blocks"),
     ):
         await client.execute_query_blocks(["savings"], "home1")
+
+
+def test_callback_registration_and_unregistration(client: TibberAPI):
+    """Test registering and unregistering callbacks for homes and vehicles."""
+    cb1 = MagicMock()
+    cb2 = MagicMock()
+    vcb1 = MagicMock()
+    vcb2 = MagicMock()
+
+    client.register_grid_reward_callback(cb1, home_id="home_1")
+    client.register_grid_reward_callback(cb2, home_id="home_2")
+    assert client._home_callbacks["home_1"] == [cb1]
+    assert client._home_callbacks["home_2"] == [cb2]
+
+    client.register_vehicle_callback("veh_1", vcb1)
+    client.register_vehicle_callback("veh_1", vcb2)
+    assert client._vehicle_callbacks["veh_1"] == [vcb1, vcb2]
+
+    # Unregister vehicle callback
+    client.unregister_vehicle_callback("veh_1", vcb1)
+    assert client._vehicle_callbacks["veh_1"] == [vcb2]
+    client.unregister_vehicle_callback("veh_1", vcb2)
+    assert "veh_1" not in client._vehicle_callbacks
+
+    # Unregister home callback
+    client.unregister_grid_reward_callback(cb1, home_id="home_1")
+    assert "home_1" not in client._home_callbacks
+    client.unregister_grid_reward_callback(cb2)
+    assert "home_2" not in client._home_callbacks
+
+
+def test_dispatch_grid_reward_and_vehicle_state(client: TibberAPI):
+    """Test dispatching data routes to appropriate home and vehicle callbacks."""
+    cb_home1 = MagicMock()
+    cb_home2 = MagicMock()
+    cb_faulty = MagicMock(side_effect=RuntimeError("Boom"))
+    vcb1 = MagicMock()
+    vcb2 = MagicMock()
+
+    client.register_grid_reward_callback(cb_home1, home_id="home_1")
+    client.register_grid_reward_callback(cb_faulty, home_id="home_1")
+    client.register_grid_reward_callback(cb_home2, home_id="home_2")
+
+    client.register_vehicle_callback("veh_1", vcb1)
+    client.register_vehicle_callback("veh_2", vcb2)
+
+    # Dispatch to home 1
+    reward_data_h1 = {
+        "homeId": "home_1",
+        "state": {"__typename": "GridRewardAvailable"},
+    }
+    client._dispatch_grid_reward(reward_data_h1)
+
+    cb_home1.assert_called_once_with(reward_data_h1)
+    cb_faulty.assert_called_once_with(reward_data_h1)
+    cb_home2.assert_not_called()
+
+    # Dispatch to vehicle 2
+    veh_data_v2 = {"id": "veh_2", "battery": {"level": 75}}
+    client._dispatch_vehicle_state("veh_2", veh_data_v2)
+
+    vcb2.assert_called_once_with(veh_data_v2)
+    vcb1.assert_not_called()
+
+
+async def test_multiplexed_subscription_protocol(client: TibberAPI):
+    """Test full multiplexed websocket protocol lifecycle, message routing, and ping/pong."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+    client._client.post.return_value = mock_token_response
+
+    mock_ws = AsyncMock()
+    mock_ws.closed = False
+    sent_messages: list[dict] = []
+
+    async def fake_send(msg_str):
+        sent_messages.append(json.loads(msg_str))
+
+    mock_ws.send = AsyncMock(side_effect=fake_send)
+
+    msg_queue: asyncio.Queue[str] = asyncio.Queue()
+    mock_ws.recv.side_effect = msg_queue.get
+
+    home_cb = MagicMock()
+    veh_cb = MagicMock()
+    client.register_grid_reward_callback(home_cb, home_id="h1")
+    client.register_vehicle_callback("v1", veh_cb)
+
+    active_homes = {"h1"}
+    active_vehicles = {"v1"}
+
+    def get_targets():
+        return active_homes, active_vehicles
+
+    sub_task = None
+    with (
+        patch("jwt.decode", return_value={"exp": 9999999999}),
+        patch(
+            "custom_components.tibber_grid_reward.client.websockets.connect"
+        ) as mock_connect,
+    ):
+        mock_connect.return_value.__aenter__.return_value = mock_ws
+
+        sub_task = asyncio.create_task(client.run_multiplexed_subscription(get_targets))
+
+        # Yield control to let connection initialize and send connection_init
+        await asyncio.sleep(0.01)
+        assert len(sent_messages) == 1
+        assert sent_messages[0]["type"] == "connection_init"
+
+        # 1. Acknowledge connection
+        await msg_queue.put(json.dumps({"type": "connection_ack"}))
+        await asyncio.sleep(0.01)
+
+        # Client should now have subscribed to both h1 and v1
+        assert len(sent_messages) == 3
+        sub_types = {m["payload"]["operationName"] for m in sent_messages[1:]}
+        assert sub_types == {"gridRewardsSubscription", "vehicleStateSubscription"}
+
+        home_sub_id = next(
+            m["id"]
+            for m in sent_messages
+            if m.get("payload", {}).get("operationName") == "gridRewardsSubscription"
+        )
+        veh_sub_id = next(
+            m["id"]
+            for m in sent_messages
+            if m.get("payload", {}).get("operationName") == "vehicleStateSubscription"
+        )
+
+        # 2. Server sends ping
+        await msg_queue.put(json.dumps({"type": "ping"}))
+        await asyncio.sleep(0.01)
+        assert sent_messages[-1] == {"type": "pong"}
+
+        # 3. Next message for grid reward
+        await msg_queue.put(
+            json.dumps(
+                {
+                    "type": "next",
+                    "id": home_sub_id,
+                    "payload": {
+                        "data": {
+                            "gridRewardStatus": {
+                                "homeId": "h1",
+                                "state": {"__typename": "GridRewardAvailable"},
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0.01)
+        assert home_cb.call_count == 1
+        assert home_cb.call_args[0][0]["homeId"] == "h1"
+
+        # 4. Next message for vehicle
+        await msg_queue.put(
+            json.dumps(
+                {
+                    "type": "next",
+                    "id": veh_sub_id,
+                    "payload": {
+                        "data": {
+                            "vehicleState": {
+                                "id": "v1",
+                                "battery": {"level": 88},
+                            }
+                        }
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0.01)
+        assert veh_cb.call_count == 1
+        assert veh_cb.call_args[0][0]["id"] == "v1"
+
+        # 5. Dynamic subscription refresh (add h2, remove v1)
+        active_homes.add("h2")
+        active_vehicles.remove("v1")
+        client.trigger_subscription_refresh()
+        await asyncio.sleep(0.01)
+
+        # Check new subscribe for h2 and complete for v1 sent
+        assert any(
+            m.get("payload", {}).get("variables", {}).get("homeId") == "h2"
+            for m in sent_messages
+        )
+        assert any(
+            m.get("type") == "complete" and m.get("id") == veh_sub_id
+            for m in sent_messages
+        )
+
+        # 6. Close websocket
+        await client.close_websocket()
+        await asyncio.sleep(0.01)
+        assert sub_task.done()

@@ -41,7 +41,9 @@ class TibberAPI:
         self._ws_reconnect: bool = True
         self._websocket: websockets.client.WebSocketClientProtocol | None = None
         self._sub_callback: Callable[[dict[str, Any]], None] | None = None
-        self._vehicle_callbacks: dict[str, Callable[[dict[str, Any]], None]] = {}
+        self._home_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
+        self._vehicle_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
+        self._sub_refresh_event: asyncio.Event = asyncio.Event()
         self.home_id: str | None = None
 
     async def _get_ssl_context(self) -> ssl.SSLContext:
@@ -51,8 +53,13 @@ class TibberAPI:
 
     async def close_websocket(self) -> None:
         self._ws_reconnect = False
+        self._sub_refresh_event.set()
         if self._websocket and not self._websocket.closed:
             await self._websocket.close()
+
+    async def async_close_websocket(self) -> None:
+        """Alias for close_websocket for consistency."""
+        await self.close_websocket()
 
     async def fetch_token(self) -> str:
         now = time.time()
@@ -299,167 +306,264 @@ class TibberAPI:
             raise TibberException from e
 
     def register_grid_reward_callback(
-        self, callback: Callable[[dict[str, Any]], None]
+        self, callback: Callable[[dict[str, Any]], None], home_id: str | None = None
     ) -> None:
-        self._sub_callback = callback
+        """Register a callback for grid reward updates, optionally scoped to a home_id."""
+        if home_id:
+            self._home_callbacks.setdefault(home_id, []).append(callback)
+        else:
+            self._sub_callback = callback
+
+    def unregister_grid_reward_callback(
+        self, callback: Callable[[dict[str, Any]], None], home_id: str | None = None
+    ) -> None:
+        """Unregister a grid reward callback."""
+        if home_id and home_id in self._home_callbacks:
+            if callback in self._home_callbacks[home_id]:
+                self._home_callbacks[home_id].remove(callback)
+            if not self._home_callbacks[home_id]:
+                del self._home_callbacks[home_id]
+        else:
+            for hid, cbs in list(self._home_callbacks.items()):
+                if callback in cbs:
+                    cbs.remove(callback)
+                if not cbs:
+                    del self._home_callbacks[hid]
+        if self._sub_callback == callback:
+            self._sub_callback = None
 
     def register_vehicle_callback(
         self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]
     ) -> None:
-        self._vehicle_callbacks[vehicle_id] = callback
+        """Register a callback for a vehicle."""
+        self._vehicle_callbacks.setdefault(vehicle_id, []).append(callback)
+
+    def unregister_vehicle_callback(
+        self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]
+    ) -> None:
+        """Unregister a vehicle callback."""
+        if vehicle_id in self._vehicle_callbacks:
+            if callback in self._vehicle_callbacks[vehicle_id]:
+                self._vehicle_callbacks[vehicle_id].remove(callback)
+            if not self._vehicle_callbacks[vehicle_id]:
+                del self._vehicle_callbacks[vehicle_id]
+
+    def trigger_subscription_refresh(self) -> None:
+        """Signal that active subscription targets have changed."""
+        self._sub_refresh_event.set()
+
+    def _dispatch_grid_reward(
+        self, reward_data: dict[str, Any], home_id: str | None = None
+    ) -> None:
+        """Dispatch grid reward data to registered callbacks."""
+        if not home_id:
+            home_id = reward_data.get("homeId") or self.home_id
+
+        callbacks_to_call: list[Callable[[dict[str, Any]], None]] = []
+        if home_id and home_id in self._home_callbacks:
+            callbacks_to_call.extend(self._home_callbacks[home_id])
+        elif self._sub_callback:
+            callbacks_to_call.append(self._sub_callback)
+
+        for cb in callbacks_to_call:
+            try:
+                cb(reward_data)
+            except Exception:
+                _LOGGER.exception("Error in grid reward callback for home %s", home_id)
+
+    def _dispatch_vehicle_state(
+        self, vehicle_id: str, vehicle_data: dict[str, Any]
+    ) -> None:
+        """Dispatch vehicle state data to registered callbacks."""
+        callbacks = list(self._vehicle_callbacks.get(vehicle_id, []))
+        for cb in callbacks:
+            try:
+                cb(vehicle_data)
+            except Exception:
+                _LOGGER.exception(
+                    "Error in vehicle callback for vehicle %s", vehicle_id
+                )
+
+    async def _sync_targets(
+        self,
+        websocket: websockets.client.WebSocketClientProtocol,
+        sub_map: dict[str, tuple[str, str]],
+        target_map: dict[tuple[str, str], str],
+        get_active_targets: Callable[[], tuple[set[str], set[str]]],
+    ) -> None:
+        """Synchronize active subscriptions with the desired set of targets."""
+        active_homes, active_vehicles = get_active_targets()
+        wanted = {("home", h) for h in active_homes} | {
+            ("vehicle", v) for v in active_vehicles
+        }
+        current = set(target_map.keys())
+
+        # Subscribe new targets
+        for kind, target_id in wanted - current:
+            sub_id = str(uuid.uuid4())
+            sub_map[sub_id] = (kind, target_id)
+            target_map[(kind, target_id)] = sub_id
+            if kind == "home":
+                msg = self._build_grid_reward_subscribe_message(target_id, sub_id)
+            else:
+                msg = self._build_vehicle_state_subscribe_message(target_id, sub_id)
+            _LOGGER.debug(
+                "Subscribing %s target %s with id %s",
+                kind,
+                target_id,
+                sub_id,
+            )
+            await websocket.send(json.dumps(msg))
+
+        # Unsubscribe removed targets
+        for kind, target_id in current - wanted:
+            sub_id = target_map.pop((kind, target_id))
+            sub_map.pop(sub_id, None)
+            _LOGGER.debug(
+                "Unsubscribing %s target %s with id %s",
+                kind,
+                target_id,
+                sub_id,
+            )
+            await websocket.send(json.dumps({"type": "complete", "id": sub_id}))
+
+    async def run_multiplexed_subscription(
+        self, get_active_targets: Callable[[], tuple[set[str], set[str]]]
+    ) -> None:
+        """Run a single multiplexed websocket connection handling all homes and vehicles."""
+        self._ws_reconnect = True
+        _LOGGER.info("Starting multiplexed Tibber websocket subscription.")
+        try:
+            while self._ws_reconnect:
+                recv_task: asyncio.Task[Any] | None = None
+                try:
+                    token = await self.fetch_token()
+                    headers = {"Authorization": f"Bearer {token}"}
+                    ssl_context = await self._get_ssl_context()
+                    async with websockets.connect(
+                        GRAPHQL_WS_URL,
+                        additional_headers=headers,
+                        subprotocols=["graphql-transport-ws"],
+                        ssl=ssl_context,
+                    ) as websocket:
+                        self._websocket = websocket
+                        await websocket.send(json.dumps({"type": "connection_init"}))
+
+                        sub_map: dict[str, tuple[str, str]] = {}
+                        target_map: dict[tuple[str, str], str] = {}
+                        is_connected = False
+
+                        while self._ws_reconnect:
+                            if recv_task is None:
+                                recv_task = asyncio.create_task(websocket.recv())
+
+                            refresh_waiter = asyncio.create_task(
+                                self._sub_refresh_event.wait()
+                            )
+                            done, _ = await asyncio.wait(
+                                [recv_task, refresh_waiter],
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+
+                            if refresh_waiter in done:
+                                self._sub_refresh_event.clear()
+                                if is_connected:
+                                    await self._sync_targets(
+                                        websocket,
+                                        sub_map,
+                                        target_map,
+                                        get_active_targets,
+                                    )
+                            else:
+                                refresh_waiter.cancel()
+
+                            if recv_task in done:
+                                msg = recv_task.result()
+                                recv_task = None
+                                data: dict[str, Any] = json.loads(msg)
+                                msg_type = data.get("type")
+
+                                if msg_type == "connection_ack":
+                                    _LOGGER.debug(
+                                        "Multiplexed websocket connection acknowledged."
+                                    )
+                                    is_connected = True
+                                    await self._sync_targets(
+                                        websocket,
+                                        sub_map,
+                                        target_map,
+                                        get_active_targets,
+                                    )
+                                elif msg_type == "ping":
+                                    await websocket.send(json.dumps({"type": "pong"}))
+                                elif msg_type == "next":
+                                    sub_id = data.get("id")
+                                    payload_data = data.get("payload", {}).get(
+                                        "data", {}
+                                    )
+                                    sub_info = sub_map.get(sub_id)
+                                    if "gridRewardStatus" in payload_data:
+                                        reward_data = payload_data["gridRewardStatus"]
+                                        if reward_data:
+                                            home_id = reward_data.get("homeId") or (
+                                                sub_info[1] if sub_info else None
+                                            )
+                                            self._dispatch_grid_reward(
+                                                reward_data, home_id
+                                            )
+                                    elif "vehicleState" in payload_data:
+                                        vehicle_data = payload_data["vehicleState"]
+                                        if vehicle_data:
+                                            vehicle_id = vehicle_data.get("id") or (
+                                                sub_info[1] if sub_info else None
+                                            )
+                                            if vehicle_id:
+                                                self._dispatch_vehicle_state(
+                                                    vehicle_id, vehicle_data
+                                                )
+                                elif msg_type == "complete":
+                                    sub_id = data.get("id")
+                                    sub_info = sub_map.pop(sub_id, None)
+                                    if sub_info:
+                                        target_map.pop(sub_info, None)
+                                        self._sub_refresh_event.set()
+                                elif msg_type == "error":
+                                    _LOGGER.error(
+                                        "Multiplexed subscription error for %s: %s",
+                                        data.get("id"),
+                                        data.get("payload"),
+                                    )
+                except (
+                    websockets.exceptions.ConnectionClosedError,
+                    websockets.exceptions.ConnectionClosedOK,
+                ):
+                    if not self._ws_reconnect:
+                        break
+                    _LOGGER.warning(
+                        "Websocket connection closed, reconnecting in 5 seconds."
+                    )
+                except Exception:
+                    _LOGGER.exception(
+                        "Error in websocket subscription, reconnecting in 5 seconds."
+                    )
+                finally:
+                    if recv_task and not recv_task.done():
+                        recv_task.cancel()
+
+                if self._ws_reconnect:
+                    await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            _LOGGER.info("Multiplexed websocket subscription task cancelled.")
+            raise
 
     async def subscribe_grid_reward(self, home_id: str) -> None:
+        """Backward-compatible wrapper to subscribe to grid reward updates."""
         self.home_id = home_id
-        self._ws_reconnect = True
-        _LOGGER.info("Starting Tibber grid reward websocket subscription.")
-        try:
-            while self._ws_reconnect:
-                try:
-                    token = await self.fetch_token()
-                    headers = {"Authorization": f"Bearer {token}"}
-                    ssl_context = await self._get_ssl_context()
-                    async with websockets.connect(
-                        GRAPHQL_WS_URL,
-                        additional_headers=headers,
-                        subprotocols=["graphql-transport-ws"],
-                        ssl=ssl_context,
-                    ) as websocket:
-                        self._websocket = websocket
-                        await websocket.send(json.dumps({"type": "connection_init"}))
-
-                        current_sub_id: str | None = None
-                        while True:
-                            msg = await websocket.recv()
-                            data: dict[str, Any] = json.loads(msg)
-
-                            if data.get("type") == "connection_ack":
-                                _LOGGER.debug("Websocket connection acknowledged.")
-                                current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = (
-                                    self._build_grid_reward_subscribe_message(
-                                        self.home_id, current_sub_id
-                                    )
-                                )
-                                await websocket.send(json.dumps(subscribe_msg))
-                            elif data.get("type") == "next":
-                                reward_data = (
-                                    data.get("payload", {})
-                                    .get("data", {})
-                                    .get("gridRewardStatus")
-                                )
-                                _LOGGER.debug("Grid reward data received: %s", data)
-                                if reward_data and self._sub_callback:
-                                    self._sub_callback(reward_data)
-                            elif (
-                                data.get("type") == "complete"
-                                and data.get("id") == current_sub_id
-                            ):
-                                current_sub_id = str(uuid.uuid4())
-                                _LOGGER.debug("Subscription complete, re-subscribing.")
-                                subscribe_msg = (
-                                    self._build_grid_reward_subscribe_message(
-                                        self.home_id, current_sub_id
-                                    )
-                                )
-                                await websocket.send(json.dumps(subscribe_msg))
-                            # else:
-                            #    _LOGGER.debug("Grid reward data received: %s", data)
-                except (
-                    websockets.exceptions.ConnectionClosedError,
-                    websockets.exceptions.ConnectionClosedOK,
-                ):
-                    if not self._ws_reconnect:
-                        break
-                    _LOGGER.warning(
-                        "Websocket connection closed, reconnecting in 5 seconds."
-                    )
-                except Exception:
-                    _LOGGER.exception(
-                        "Error in websocket subscription, reconnecting in 5 seconds."
-                    )
-
-                if self._ws_reconnect:
-                    await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            _LOGGER.info("Tibber websocket subscription task cancelled.")
-            raise
+        await self.run_multiplexed_subscription(lambda: ({home_id}, set()))
 
     async def subscribe_vehicle_state(self, vehicle_id: str) -> None:
-        self._ws_reconnect = True
-        _LOGGER.info(
-            "Starting Tibber vehicle state websocket subscription for %s.", vehicle_id
-        )
-        try:
-            while self._ws_reconnect:
-                try:
-                    token = await self.fetch_token()
-                    headers = {"Authorization": f"Bearer {token}"}
-                    ssl_context = await self._get_ssl_context()
-                    async with websockets.connect(
-                        GRAPHQL_WS_URL,
-                        additional_headers=headers,
-                        subprotocols=["graphql-transport-ws"],
-                        ssl=ssl_context,
-                    ) as websocket:
-                        self._websocket = websocket
-                        await websocket.send(json.dumps({"type": "connection_init"}))
-
-                        current_sub_id: str | None = None
-                        while True:
-                            msg = await websocket.recv()
-                            data: dict[str, Any] = json.loads(msg)
-
-                            if data.get("type") == "connection_ack":
-                                _LOGGER.debug("Websocket connection acknowledged.")
-                                current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = (
-                                    self._build_vehicle_state_subscribe_message(
-                                        vehicle_id, current_sub_id
-                                    )
-                                )
-                                await websocket.send(json.dumps(subscribe_msg))
-                            elif data.get("type") == "next":
-                                _LOGGER.debug("Vehicle state data received: %s", data)
-                                vehicle_data = (
-                                    data.get("payload", {})
-                                    .get("data", {})
-                                    .get("vehicleState")
-                                )
-                                if vehicle_data and self._vehicle_callbacks.get(
-                                    vehicle_id
-                                ):
-                                    self._vehicle_callbacks[vehicle_id](vehicle_data)
-                            elif (
-                                data.get("type") == "complete"
-                                and data.get("id") == current_sub_id
-                            ):
-                                _LOGGER.debug("Subscription complete, re-subscribing.")
-                                current_sub_id = str(uuid.uuid4())
-                                subscribe_msg = (
-                                    self._build_vehicle_state_subscribe_message(
-                                        vehicle_id, current_sub_id
-                                    )
-                                )
-                                await websocket.send(json.dumps(subscribe_msg))
-                except (
-                    websockets.exceptions.ConnectionClosedError,
-                    websockets.exceptions.ConnectionClosedOK,
-                ):
-                    if not self._ws_reconnect:
-                        break
-                    _LOGGER.warning(
-                        "Websocket connection closed, reconnecting in 5 seconds."
-                    )
-                except Exception:
-                    _LOGGER.exception(
-                        "Error in websocket subscription, reconnecting in 5 seconds."
-                    )
-
-                if self._ws_reconnect:
-                    await asyncio.sleep(5)
-        except asyncio.CancelledError:
-            _LOGGER.info("Tibber websocket subscription task cancelled.")
-            raise
+        """Backward-compatible wrapper to subscribe to vehicle state updates."""
+        await self.run_multiplexed_subscription(lambda: (set(), {vehicle_id}))
 
     def _build_grid_reward_subscribe_message(
         self, home_id: str, sub_id: str
