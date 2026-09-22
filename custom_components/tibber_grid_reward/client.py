@@ -5,7 +5,7 @@ import ssl
 import time
 import uuid
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -152,7 +152,7 @@ class TibberAPI:
 
         token = await self.fetch_token()
         headers = {"Authorization": f"Bearer {token}"}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         query = comp.build_query()
         variables = comp.build_variables(now, home_id, device_id=device_id, **kwargs)
@@ -293,7 +293,7 @@ class TibberAPI:
                         data.get("payload", {}).get("data", {}).get("gridRewardStatus")
                     )
                 return None
-        except (asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
+        except (TimeoutError, websockets.exceptions.WebSocketException) as e:
             raise TibberConnectionError from e
         except Exception as e:
             raise TibberException from e

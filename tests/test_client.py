@@ -424,4 +424,3 @@ async def test_execute_query_blocks_graphql_error(client: TibberAPI):
         pytest.raises(TibberException, match="GraphQL error executing query blocks"),
     ):
         await client.execute_query_blocks(["savings"], "home1")
-

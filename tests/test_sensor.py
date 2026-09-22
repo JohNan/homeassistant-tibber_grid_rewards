@@ -85,7 +85,9 @@ async def test_grid_reward_current_day_sensor(mock_api, entry_id):
     """Test the GridRewardCurrentDaySensor."""
     mock_tracker = MagicMock()
     mock_tracker.daily_reward = 10.5
-    description = next(d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day")
+    description = next(
+        d for d in GRID_REWARD_SENSORS if d.key == "grid_reward_current_day"
+    )
     sensor = GridRewardCurrentDaySensor(mock_api, entry_id, mock_tracker, description)
     sensor.hass = MagicMock()
     sensor.async_write_ha_state = MagicMock()
@@ -103,7 +105,11 @@ async def test_grid_reward_current_day_sensor(mock_api, entry_id):
 
 @pytest.mark.parametrize(
     "description",
-    [d for d in GRID_REWARD_SENSORS if d.key in ("last_reward_session", "current_reward_session")],
+    [
+        d
+        for d in GRID_REWARD_SENSORS
+        if d.key in ("last_reward_session", "current_reward_session")
+    ],
 )
 async def test_reward_session_sensor(mock_api, entry_id, description):
     """Test the RewardSessionSensor."""
@@ -193,9 +199,7 @@ def mock_config_entry():
 
 
 @patch("custom_components.tibber_grid_reward.sensor.TibberPublicAPI")
-async def test_price_sensor_isolation(
-    mock_public_api, mock_hass, mock_config_entry
-):
+async def test_price_sensor_isolation(mock_public_api, mock_hass, mock_config_entry):
     """Test that PriceSensor is not added to grid_reward_devices."""
     mock_tibber_api = MagicMock()
     mock_hass.data[DOMAIN][mock_config_entry.entry_id] = {
@@ -215,14 +219,14 @@ async def test_price_sensor_isolation(
         "grid_reward_devices"
     ]
 
-    assert not any(
-        isinstance(device, PriceSensor) for device in grid_reward_devices
-    ), "PriceSensor should not be in grid_reward_devices"
+    assert not any(isinstance(device, PriceSensor) for device in grid_reward_devices), (
+        "PriceSensor should not be in grid_reward_devices"
+    )
 
     added_entities = async_add_entities.call_args[0][0]
-    assert any(
-        isinstance(entity, PriceSensor) for entity in added_entities
-    ), "PriceSensor should be added to entities"
+    assert any(isinstance(entity, PriceSensor) for entity in added_entities), (
+        "PriceSensor should be added to entities"
+    )
 
 
 async def test_price_sensor_update():
@@ -242,21 +246,23 @@ async def test_price_sensor_update():
     # Tibber usually returns like: 2024-04-01T12:00:00.000+02:00
     current_hour_str = current_hour.strftime("%Y-%m-%dT%H:%M:%S.000%z")
     # Python strftime %z produces +0200, Tibber produces +02:00
-    if len(current_hour_str) >= 5 and current_hour_str[-5] in ('+', '-'):
+    if len(current_hour_str) >= 5 and current_hour_str[-5] in ("+", "-"):
         current_hour_str = current_hour_str[:-2] + ":" + current_hour_str[-2:]
 
-    mock_public_api.get_price_info = AsyncMock(return_value={
-        "today": [
-            {
-                "total": 0.5,
-                "energy": 0.4,
-                "tax": 0.1,
-                "startsAt": current_hour_str,
-                "currency": "SEK"
-            }
-        ],
-        "tomorrow": []
-    })
+    mock_public_api.get_price_info = AsyncMock(
+        return_value={
+            "today": [
+                {
+                    "total": 0.5,
+                    "energy": 0.4,
+                    "tax": 0.1,
+                    "startsAt": current_hour_str,
+                    "currency": "SEK",
+                }
+            ],
+            "tomorrow": [],
+        }
+    )
 
     description = MagicMock()
     description.key = "current_price"
@@ -304,7 +310,9 @@ def test_sensor_update_data_no_hass(mock_api, entry_id):
 async def test_vehicle_battery_sensor(mock_api, entry_id):
     """Test the VehicleBatterySensor."""
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
-    sensor = VehicleBatterySensor(mock_api, entry_id, device, {"battery": {"level": 79}})
+    sensor = VehicleBatterySensor(
+        mock_api, entry_id, device, {"battery": {"level": 79}}
+    )
     sensor.hass = MagicMock()
     sensor.async_write_ha_state = MagicMock()
 
@@ -324,12 +332,16 @@ async def test_vehicle_battery_sensor(mock_api, entry_id):
     sensor.async_write_ha_state.assert_called_once()
 
 
-def test_vehicle_battery_sensor_update_before_added_to_hass_is_a_noop(mock_api, entry_id):
+def test_vehicle_battery_sensor_update_before_added_to_hass_is_a_noop(
+    mock_api, entry_id
+):
     """Regression: async_add_entities() registers an entity with hass as a
     background task, not synchronously. A vehicleState update landing
     before that finishes must not crash trying to write state."""
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
-    sensor = VehicleBatterySensor(mock_api, entry_id, device, {"battery": {"level": 79}})
+    sensor = VehicleBatterySensor(
+        mock_api, entry_id, device, {"battery": {"level": 79}}
+    )
     sensor.async_write_ha_state = MagicMock()
     assert sensor.hass is None
 
@@ -345,7 +357,9 @@ async def test_vehicle_battery_sensor_manager_online_adds_sensor(mock_api):
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
     vehicle_devices = []
     async_add_entities = MagicMock()
-    manager = _VehicleBatterySensorManager(mock_api, "test_entry_id", device, vehicle_devices, async_add_entities)
+    manager = _VehicleBatterySensorManager(
+        mock_api, "test_entry_id", device, vehicle_devices, async_add_entities
+    )
     vehicle_devices.append(manager)
 
     manager.update_data({"isAlive": True, "battery": {"level": 79}})
@@ -363,7 +377,9 @@ async def test_vehicle_battery_sensor_manager_offline_adds_nothing(mock_api):
     device = {"id": "vehicle1", "type": "vehicle", "name": "My Car"}
     vehicle_devices = []
     async_add_entities = MagicMock()
-    manager = _VehicleBatterySensorManager(mock_api, "test_entry_id", device, vehicle_devices, async_add_entities)
+    manager = _VehicleBatterySensorManager(
+        mock_api, "test_entry_id", device, vehicle_devices, async_add_entities
+    )
     vehicle_devices.append(manager)
 
     manager.update_data({"isAlive": False})
@@ -394,7 +410,9 @@ async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_ent
     added_entities = async_add_entities.call_args[0][0]
     assert not any(isinstance(e, VehicleBatterySensor) for e in added_entities)
 
-    vehicle_devices = mock_hass.data[DOMAIN][mock_config_entry.entry_id]["vehicle_devices"]["vehicle1"]
+    vehicle_devices = mock_hass.data[DOMAIN][mock_config_entry.entry_id][
+        "vehicle_devices"
+    ]["vehicle1"]
     assert len(vehicle_devices) == 1
     manager = vehicle_devices[0]
     assert isinstance(manager, _VehicleBatterySensorManager)
@@ -403,7 +421,11 @@ async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_ent
     async_add_entities.reset_mock()
     manager.update_data({"isAlive": True, "battery": {"level": 50}})
     async_add_entities.assert_called_once()
-    battery_sensors = [e for e in async_add_entities.call_args[0][0] if isinstance(e, VehicleBatterySensor)]
+    battery_sensors = [
+        e
+        for e in async_add_entities.call_args[0][0]
+        if isinstance(e, VehicleBatterySensor)
+    ]
     assert len(battery_sensors) == 1
     assert battery_sensors[0] in vehicle_devices
 
@@ -539,7 +561,9 @@ async def test_battery_coordinator_and_sensors(mock_api, entry_id):
     assert empty_attrs["forecast"] == []
 
 
-async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mock_config_entry):
+async def test_battery_sensor_setup_in_async_setup_entry(
+    mock_api, mock_hass, mock_config_entry
+):
     """Test full setup of battery sensors with coordinator in async_setup_entry."""
     device = {"id": "battery1", "type": "battery", "name": "Homevolt"}
     mock_config_entry.data["flex_devices"] = [device]
@@ -577,7 +601,9 @@ async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mo
     assert any(isinstance(e, BatteryPlannedActivitySensor) for e in added)
 
     # Verify coordinator was registered in entry_data
-    coordinators = mock_hass.data[DOMAIN][mock_config_entry.entry_id]["battery_coordinators"]
+    coordinators = mock_hass.data[DOMAIN][mock_config_entry.entry_id][
+        "battery_coordinators"
+    ]
     assert "battery1" in coordinators
     assert isinstance(coordinators["battery1"], TibberBatteryDataCoordinator)
 
@@ -585,13 +611,15 @@ async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mo
 async def test_battery_coordinator_update_failure(mock_hass, mock_api):
     """Test coordinator update failure on API error."""
     coordinator = TibberBatteryDataCoordinator(mock_hass, mock_api, "home1", "battery1")
-    mock_api.execute_query_blocks = AsyncMock(side_effect=TibberConnectionError("Connection lost"))
+    mock_api.execute_query_blocks = AsyncMock(
+        side_effect=TibberConnectionError("Connection lost")
+    )
 
     with pytest.raises(UpdateFailed, match="Error communicating with Tibber API"):
         await coordinator._async_update_data()
 
-    mock_api.execute_query_blocks = AsyncMock(side_effect=RuntimeError("Unexpected crash"))
+    mock_api.execute_query_blocks = AsyncMock(
+        side_effect=RuntimeError("Unexpected crash")
+    )
     with pytest.raises(UpdateFailed, match="Unexpected error updating battery data"):
         await coordinator._async_update_data()
-
-

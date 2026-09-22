@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -59,7 +59,7 @@ class TibberPublicAPI:
 
     async def get_price_info(self, home_id: str) -> dict[str, Any] | None:
         """Fetch price info for a specific home."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cache_time = self._price_cache_time.get(home_id)
         if cache_time and now - cache_time < timedelta(hours=6):
             _LOGGER.debug("Returning cached price info for home %s.", home_id)
@@ -100,9 +100,13 @@ class TibberPublicAPI:
             response.raise_for_status()
             _LOGGER.debug("Successfully fetched price info from public API.")
             data = response.json()
-            price_info = data.get("data", {}).get("viewer", {}).get("home", {}).get(
-                "currentSubscription", {}
-            ).get("priceInfo")
+            price_info = (
+                data.get("data", {})
+                .get("viewer", {})
+                .get("home", {})
+                .get("currentSubscription", {})
+                .get("priceInfo")
+            )
             self._price_cache[home_id] = price_info
             self._price_cache_time[home_id] = now
             return price_info

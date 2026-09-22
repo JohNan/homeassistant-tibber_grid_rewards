@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # Line length handled automatically by ruff format
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D100", "D101", "D102", "D103", "D104", "T001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+addopts = "--cov=custom_components"
+norecursedirs = [".git"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["custom_components"]
+omit = [
+    "*/const.py",
+    "*/config_flow.py",
+    "*/manifest.json",
+    "*/services.yaml",
+    "*/strings.json",
+    "*/translations/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

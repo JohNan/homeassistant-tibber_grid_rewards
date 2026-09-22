@@ -1,4 +1,5 @@
 """Platform for sensor integration."""
+
 import logging
 from typing import Any
 
@@ -68,9 +69,7 @@ def _reason_to_state(typename: str | None) -> str | None:
     """Turn a reason type name into a snake_case sensor state."""
     if not typename:
         return None
-    name = (
-        typename.removeprefix(_REASON_PREFIX)
-    )
+    name = typename.removeprefix(_REASON_PREFIX)
     out = []
     for i, char in enumerate(name):
         if char.isupper() and i:
@@ -221,7 +220,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             ):
                 vehicle_devices = entry_data["vehicle_devices"][vehicle_id]
                 manager = _VehicleBatterySensorManager(
-                    api, config_entry.entry_id, device, vehicle_devices, async_add_entities
+                    api,
+                    config_entry.entry_id,
+                    device,
+                    vehicle_devices,
+                    async_add_entities,
                 )
                 vehicle_devices.append(manager)
 
@@ -321,7 +324,9 @@ class RewardSessionSensor(GridRewardSensor):
         return None
 
 
-class BatterySavingsSensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
+class BatterySavingsSensor(
+    CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity
+):
     """Savings for one aggregation period of one battery."""
 
     entity_description: SensorEntityDescription
@@ -371,7 +376,9 @@ class BatterySavingsSensor(CoordinatorEntity[TibberBatteryDataCoordinator], Sens
         return item.get("unit")
 
 
-class BatteryActivitySensor(CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity):
+class BatteryActivitySensor(
+    CoordinatorEntity[TibberBatteryDataCoordinator], SensorEntity
+):
     """Why the battery is doing what it is doing right now.
 
     Tibber labels each activity interval with a reason, which distinguishes
@@ -561,9 +568,7 @@ class FlexDeviceSensor(SensorEntity):
             "Updating flex device sensor %s with data: %s", self.unique_id, data
         )
         flex_devices = data.get("flexDevices", [])
-        device_id_key = (
-            "vehicleId" if self._device_type == "vehicle" else "batteryId"
-        )
+        device_id_key = "vehicleId" if self._device_type == "vehicle" else "batteryId"
         for device in flex_devices:
             if device.get(device_id_key) == self._device_id:
                 self._attributes = device
@@ -580,9 +585,7 @@ class FlexDeviceSensor(SensorEntity):
             if self._device_type == "vehicle":
                 is_plugged_in = data.get("isPluggedIn")
                 self._attr_icon = (
-                    "mdi:car-electric"
-                    if is_plugged_in
-                    else "mdi:car-electric-outline"
+                    "mdi:car-electric" if is_plugged_in else "mdi:car-electric-outline"
                 )
                 return "Plugged In" if is_plugged_in else "Unplugged"
             self._attr_icon = "mdi:battery"
@@ -641,18 +644,14 @@ class PriceSensor(SensorEntity):
                 return False
             return dt == current_hour
 
-        current_price = next(
-            (p for p in all_prices_data if is_current_hour(p)), None
-        )
+        current_price = next((p for p in all_prices_data if is_current_hour(p)), None)
 
         if current_price:
             self._attr_native_value = current_price.get("total")
             if "currency" in current_price:
                 self._attr_native_unit_of_measurement = current_price["currency"]
 
-        all_prices = [
-            p["total"] for p in all_prices_data if p.get("total") is not None
-        ]
+        all_prices = [p["total"] for p in all_prices_data if p.get("total") is not None]
 
         def get_price_rating(price, prices):
             if not prices or price is None:

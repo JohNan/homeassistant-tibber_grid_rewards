@@ -1,4 +1,5 @@
 """Provides device actions for Tibber Grid Reward."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -42,11 +43,7 @@ async def async_get_action_capabilities(
 ) -> dict[str, vol.Schema]:
     """List action capabilities."""
     if config[CONF_TYPE] == "set_value":
-        return {
-            "extra_fields": vol.Schema(
-                {vol.Required(ATTR_TIME): cv.time}
-            )
-        }
+        return {"extra_fields": vol.Schema({vol.Required(ATTR_TIME): cv.time})}
     return {}
 
 

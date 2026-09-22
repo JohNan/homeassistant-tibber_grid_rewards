@@ -1,4 +1,5 @@
 """Daily reward tracker for Tibber Grid Reward."""
+
 import logging
 
 from homeassistant.core import HomeAssistant, callback
@@ -59,5 +60,5 @@ class DailyRewardTracker:
         self.daily_reward = monthly_reward - reward_at_start_of_day
         self._data["daily_reward"] = self.daily_reward
         self._data["last_known_monthly_reward"] = monthly_reward
-        
+
         self._hass.async_create_task(self._store.async_save(self._data))

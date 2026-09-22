@@ -1,4 +1,5 @@
 """Reward session tracker for Tibber Grid Reward."""
+
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -76,6 +77,6 @@ class RewardSessionTracker:
         active_session = self._data.get("active_session")
         if not active_session:
             return 0.0
-        
+
         reward = self._current_daily_reward - active_session["reward_at_start"]
         return round(reward, 4)

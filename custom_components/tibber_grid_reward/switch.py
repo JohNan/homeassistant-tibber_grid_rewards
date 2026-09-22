@@ -1,4 +1,5 @@
 """Platform for switch integration."""
+
 from __future__ import annotations
 
 import logging
@@ -64,12 +65,17 @@ class SmartChargingSwitch(SwitchEntity):
     @callback
     def update_data(self, data: dict[str, Any]) -> None:
         """Update the entity from grid reward or vehicle state data."""
-        _LOGGER.debug("Updating SmartChargingSwitch for %s with data: %s", self.entity_id, data)
+        _LOGGER.debug(
+            "Updating SmartChargingSwitch for %s with data: %s", self.entity_id, data
+        )
 
         # Check gridRewardStatus update
         flex_devices = data.get("flexDevices", [])
         for dev in flex_devices:
-            if dev.get("vehicleId") == self._device_id and "isSmartChargingEnabled" in dev:
+            if (
+                dev.get("vehicleId") == self._device_id
+                and "isSmartChargingEnabled" in dev
+            ):
                 self._attr_is_on = dev["isSmartChargingEnabled"]
                 self.async_write_ha_state()
                 return
@@ -97,7 +103,13 @@ class SmartChargingSwitch(SwitchEntity):
                 if isinstance(status, bool):
                     self._attr_is_on = status
                 elif isinstance(status, str):
-                    self._attr_is_on = status.lower() in ("enabled", "active", "true", "on", "suspended")
+                    self._attr_is_on = status.lower() in (
+                        "enabled",
+                        "active",
+                        "true",
+                        "on",
+                        "suspended",
+                    )
                 self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:

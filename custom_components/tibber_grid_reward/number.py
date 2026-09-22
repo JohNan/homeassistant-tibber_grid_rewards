@@ -1,4 +1,5 @@
 """Platform for number integration."""
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,9 @@ async def async_setup_entry(
         if device["type"] == "vehicle":
             vehicle_id = device["id"]
             vehicle_devices = entry_data["vehicle_devices"][vehicle_id]
-            manager = _BatteryLevelEntityManager(api, config_entry.entry_id, device, vehicle_devices, async_add_entities)
+            manager = _BatteryLevelEntityManager(
+                api, config_entry.entry_id, device, vehicle_devices, async_add_entities
+            )
             vehicle_devices.append(manager)
 
 
