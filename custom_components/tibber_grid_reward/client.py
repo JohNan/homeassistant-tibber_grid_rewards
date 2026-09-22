@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -39,7 +41,7 @@ class TibberAPI:
         self._cached_token: str | None = None
         self._cached_exp: float = 0
         self._ws_reconnect: bool = True
-        self._websocket: websockets.client.WebSocketClientProtocol | None = None
+        self._websocket: Any = None
         self._sub_callback: Callable[[dict[str, Any]], None] | None = None
         self._home_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._vehicle_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
@@ -386,7 +388,7 @@ class TibberAPI:
 
     async def _sync_targets(
         self,
-        websocket: websockets.client.WebSocketClientProtocol,
+        websocket: Any,
         sub_map: dict[str, tuple[str, str]],
         target_map: dict[tuple[str, str], str],
         get_active_targets: Callable[[], tuple[set[str], set[str]]],
