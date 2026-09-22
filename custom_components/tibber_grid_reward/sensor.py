@@ -119,6 +119,10 @@ FLEX_DEVICE_SENSORS: tuple[SensorEntityDescription, ...] = (
         name="State",
     ),
     SensorEntityDescription(
+        key="grid_reward_reason",
+        name="Grid Reward Reason",
+    ),
+    SensorEntityDescription(
         key="connectivity",
         name="Connectivity",
     ),
@@ -566,6 +570,23 @@ class FlexDeviceSensor(SensorEntity):
             "via_device": (DOMAIN, self._entry_id),
         }
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return extra state attributes for flex device."""
+        if self.entity_description.key in ("state", "grid_reward_reason"):
+            state_data = self._attributes.get("state") or {}
+            attrs: dict[str, Any] = {}
+            if "__typename" in state_data:
+                attrs["state"] = state_data["__typename"]
+            if "kind" in state_data and state_data["kind"] is not None:
+                attrs["kind"] = state_data["kind"]
+            if "reason" in state_data and state_data["reason"] is not None:
+                attrs["reason"] = state_data["reason"]
+            if "reasons" in state_data and state_data["reasons"] is not None:
+                attrs["reasons"] = state_data["reasons"]
+            return attrs
+        return {}
+
     @callback
     def update_data(self, data):
         _LOGGER.debug(
@@ -574,7 +595,12 @@ class FlexDeviceSensor(SensorEntity):
         flex_devices = data.get("flexDevices", [])
         device_id_key = "vehicleId" if self._device_type == "vehicle" else "batteryId"
         for device in flex_devices:
-            if device.get(device_id_key) == self._device_id:
+            dev_id = (
+                device.get(device_id_key)
+                or device.get("vehicleId")
+                or device.get("batteryId")
+            )
+            if dev_id == self._device_id:
                 self._attributes = device
                 self._attr_native_value = self._get_state(device)
                 if self.hass is not None:
@@ -585,6 +611,19 @@ class FlexDeviceSensor(SensorEntity):
         """Get the state of the sensor."""
         if self.entity_description.key == "state":
             return data.get("state", {}).get("__typename")
+        if self.entity_description.key == "grid_reward_reason":
+            state_data = data.get("state", {})
+            typename = state_data.get("__typename")
+            if typename == "GridRewardDelivering":
+                return state_data.get("reason")
+            if typename == "GridRewardUnavailable":
+                reasons = state_data.get("reasons")
+                if isinstance(reasons, list) and reasons:
+                    return ", ".join(reasons)
+                return None
+            if typename == "GridRewardAvailable":
+                return state_data.get("kind")
+            return None
         if self.entity_description.key == "connectivity":
             if self._device_type == "vehicle":
                 is_plugged_in = data.get("isPluggedIn")

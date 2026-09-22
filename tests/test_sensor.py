@@ -169,6 +169,8 @@ async def test_flex_device_sensor(mock_api, entry_id, description):
 
     if description.key == "state":
         assert state == "PluggedIn"
+    elif description.key == "grid_reward_reason":
+        assert state is None
     elif description.key == "connectivity":
         assert state == "Plugged In"
         assert sensor.icon == "mdi:car-electric"
@@ -595,11 +597,13 @@ async def test_battery_sensor_setup_in_async_setup_entry(
     async_add_entities.assert_called_once()
     added = async_add_entities.call_args[0][0]
 
-    # Verify entities: 3 savings, 1 activity, 1 planned, 2 flex sensors
+    # Verify entities: 3 savings, 1 activity, 1 planned, 3 flex sensors
     battery_savings = [e for e in added if isinstance(e, BatterySavingsSensor)]
     assert len(battery_savings) == 3
     assert any(isinstance(e, BatteryActivitySensor) for e in added)
     assert any(isinstance(e, BatteryPlannedActivitySensor) for e in added)
+    flex_sensors = [e for e in added if isinstance(e, FlexDeviceSensor)]
+    assert len(flex_sensors) == 3
 
     # Verify coordinator was registered in entry_data
     coordinators = mock_hass.data[DOMAIN][mock_config_entry.entry_id][
@@ -624,3 +628,76 @@ async def test_battery_coordinator_update_failure(mock_hass, mock_api):
     )
     with pytest.raises(UpdateFailed, match="Unexpected error updating battery data"):
         await coordinator._async_update_data()
+
+
+async def test_flex_device_grid_reward_reason_and_attributes(mock_api, entry_id):
+    """Test FlexDeviceSensor grid reward reason and extra state attributes."""
+    reason_desc = next(d for d in FLEX_DEVICE_SENSORS if d.key == "grid_reward_reason")
+    state_desc = next(d for d in FLEX_DEVICE_SENSORS if d.key == "state")
+
+    device = {"id": "bat1", "type": "battery", "name": "Homevolt"}
+    reason_sensor = FlexDeviceSensor(mock_api, entry_id, device, reason_desc)
+    state_sensor = FlexDeviceSensor(mock_api, entry_id, device, state_desc)
+    reason_sensor.hass = MagicMock()
+    state_sensor.hass = MagicMock()
+    reason_sensor.async_write_ha_state = MagicMock()
+    state_sensor.async_write_ha_state = MagicMock()
+
+    # Delivering
+    data_delivering = {
+        "flexDevices": [
+            {
+                "batteryId": "bat1",
+                "state": {
+                    "__typename": "GridRewardDelivering",
+                    "reason": "Battery discharging for rewards",
+                },
+            }
+        ]
+    }
+    reason_sensor.update_data(data_delivering)
+    state_sensor.update_data(data_delivering)
+    assert reason_sensor.native_value == "Battery discharging for rewards"
+    assert state_sensor.native_value == "GridRewardDelivering"
+    assert reason_sensor.extra_state_attributes == {
+        "state": "GridRewardDelivering",
+        "reason": "Battery discharging for rewards",
+    }
+
+    # Unavailable
+    data_unavailable = {
+        "flexDevices": [
+            {
+                "batteryId": "bat1",
+                "state": {
+                    "__typename": "GridRewardUnavailable",
+                    "reasons": ["BATTERY_EMPTY", "OFFLINE"],
+                },
+            }
+        ]
+    }
+    reason_sensor.update_data(data_unavailable)
+    assert reason_sensor.native_value == "BATTERY_EMPTY, OFFLINE"
+    assert reason_sensor.extra_state_attributes == {
+        "state": "GridRewardUnavailable",
+        "reasons": ["BATTERY_EMPTY", "OFFLINE"],
+    }
+
+    # Available
+    data_available = {
+        "flexDevices": [
+            {
+                "batteryId": "bat1",
+                "state": {
+                    "__typename": "GridRewardAvailable",
+                    "kind": "DISCHARGE",
+                },
+            }
+        ]
+    }
+    reason_sensor.update_data(data_available)
+    assert reason_sensor.native_value == "DISCHARGE"
+    assert reason_sensor.extra_state_attributes == {
+        "state": "GridRewardAvailable",
+        "kind": "DISCHARGE",
+    }
