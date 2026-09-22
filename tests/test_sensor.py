@@ -3,12 +3,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from custom_components.tibber_grid_reward.client import TibberConnectionError
 from custom_components.tibber_grid_reward.const import DOMAIN
+from custom_components.tibber_grid_reward.coordinator import (
+    TibberBatteryData,
+    TibberBatteryDataCoordinator,
+)
 from custom_components.tibber_grid_reward.sensor import (
+    BATTERY_ACTIVITY_SENSOR_DESCRIPTION,
+    BATTERY_PLANNED_SENSOR_DESCRIPTION,
+    BATTERY_SAVINGS_SENSORS,
     FLEX_DEVICE_SENSORS,
     GRID_REWARD_SENSORS,
+    BatteryActivitySensor,
+    BatteryPlannedActivitySensor,
+    BatterySavingsSensor,
     FlexDeviceSensor,
     GridRewardCurrentDaySensor,
     GridRewardSensor,
@@ -394,3 +406,192 @@ async def test_vehicle_battery_sensor_setup(mock_api, mock_hass, mock_config_ent
     battery_sensors = [e for e in async_add_entities.call_args[0][0] if isinstance(e, VehicleBatterySensor)]
     assert len(battery_sensors) == 1
     assert battery_sensors[0] in vehicle_devices
+
+
+async def test_battery_coordinator_and_sensors(mock_api, entry_id):
+    """Test battery coordinator and all three battery sensor classes."""
+    device = {"id": "battery1", "type": "battery", "name": "My Battery"}
+    coordinator = MagicMock(spec=TibberBatteryDataCoordinator)
+    coordinator.data = TibberBatteryData(
+        savings={
+            "TODAY": {"value": 15.5, "unit": "SEK", "kind": "TOTAL"},
+            "WEEK": {"value": 110.0, "unit": "SEK", "kind": "TOTAL"},
+            "MONTH": {"value": 450.2, "unit": "SEK", "kind": "TOTAL"},
+        },
+        activity=[
+            {
+                "from": "2026-09-19T10:00:00Z",
+                "to": "2026-09-19T10:30:00Z",
+                "reason": {"__typename": "HomeBatteryChargingAtLowPrice"},
+                "secondaryReason": None,
+            },
+            {
+                "from": "2026-09-19T10:30:00Z",
+                "to": None,
+                "reason": {"__typename": "HomeBatteryDischargingForGridRewards"},
+                "secondaryReason": {"__typename": "HomeBatteryDischargingAtHighPrice"},
+            },
+        ],
+        planned=[
+            {
+                "kind": "FORECAST",
+                "time": "2026-09-19T14:00:00Z",
+                "charged": 0,
+                "discharged": 3000,
+                "state_of_charge": 75.5,
+            },
+            {
+                "kind": "FORECAST",
+                "time": "2026-09-19T14:15:00Z",
+                "charged": 0,
+                "discharged": 2500,
+                "state_of_charge": 68.2,
+            },
+        ],
+    )
+
+    # 1. Savings sensors
+    savings_today = BatterySavingsSensor(
+        coordinator, entry_id, device, BATTERY_SAVINGS_SENSORS[0]
+    )
+    assert savings_today.name == "My Battery Savings Today"
+    assert savings_today.unique_id == "battery1_savings_today"
+    assert savings_today.native_value == 15.5
+    assert savings_today.native_unit_of_measurement == "SEK"
+    assert savings_today.device_info == {
+        "identifiers": {(DOMAIN, "battery1")},
+        "name": "My Battery",
+        "manufacturer": "Tibber",
+        "via_device": (DOMAIN, entry_id),
+    }
+
+    savings_month = BatterySavingsSensor(
+        coordinator, entry_id, device, BATTERY_SAVINGS_SENSORS[2]
+    )
+    assert savings_month.native_value == 450.2
+
+    # Empty savings handling
+    coordinator.data = TibberBatteryData(savings={}, activity=[], planned=[])
+    assert savings_today.native_value is None
+    assert savings_today.native_unit_of_measurement is None
+
+    # 2. Activity sensor
+    coordinator.data = TibberBatteryData(
+        savings={},
+        activity=[
+            {
+                "from": "2026-09-19T10:30:00Z",
+                "to": None,
+                "reason": {"__typename": "HomeBatteryDischargingForGridRewards"},
+                "secondaryReason": {"__typename": "HomeBatteryDischargingAtHighPrice"},
+            }
+        ],
+        planned=[],
+    )
+    activity_sensor = BatteryActivitySensor(
+        coordinator, entry_id, device, BATTERY_ACTIVITY_SENSOR_DESCRIPTION
+    )
+    assert activity_sensor.name == "My Battery Activity Reason"
+    assert activity_sensor.unique_id == "battery1_battery_activity_reason"
+    assert activity_sensor.native_value == "discharging_for_grid_rewards"
+    attrs = activity_sensor.extra_state_attributes
+    assert attrs["reason_raw"] == "HomeBatteryDischargingForGridRewards"
+    assert attrs["secondary_reason"] == "discharging_at_high_price"
+    assert attrs["since"] == "2026-09-19T10:30:00Z"
+
+    # Empty activity handling
+    coordinator.data = TibberBatteryData(savings={}, activity=[], planned=[])
+    assert activity_sensor.native_value is None
+    assert activity_sensor.extra_state_attributes == {}
+
+    # 3. Planned activity sensor
+    coordinator.data = TibberBatteryData(
+        savings={},
+        activity=[],
+        planned=[
+            {
+                "kind": "FORECAST",
+                "time": "2026-09-19T14:00:00Z",
+                "charged": 0,
+                "discharged": 3000,
+                "state_of_charge": 75.54,
+            }
+        ],
+    )
+    planned_sensor = BatteryPlannedActivitySensor(
+        coordinator, entry_id, device, BATTERY_PLANNED_SENSOR_DESCRIPTION
+    )
+    assert planned_sensor.name == "My Battery Next Planned Activity"
+    assert planned_sensor.unique_id == "battery1_battery_planned_activity"
+    assert planned_sensor.native_value == dt_util.parse_datetime("2026-09-19T14:00:00Z")
+    planned_attrs = planned_sensor.extra_state_attributes
+    assert planned_attrs["next_action"] == "discharge"
+    assert planned_attrs["next_power_w"] == 3000
+    assert len(planned_attrs["forecast"]) == 1
+    assert planned_attrs["forecast"][0]["state_of_charge"] == 75.5
+
+    # Empty / below threshold forecast
+    coordinator.data = TibberBatteryData(savings={}, activity=[], planned=[])
+    assert planned_sensor.native_value is None
+    empty_attrs = planned_sensor.extra_state_attributes
+    assert empty_attrs["next_action"] is None
+    assert empty_attrs["next_power_w"] is None
+    assert empty_attrs["forecast"] == []
+
+
+async def test_battery_sensor_setup_in_async_setup_entry(mock_api, mock_hass, mock_config_entry):
+    """Test full setup of battery sensors with coordinator in async_setup_entry."""
+    device = {"id": "battery1", "type": "battery", "name": "Homevolt"}
+    mock_config_entry.data["flex_devices"] = [device]
+    mock_config_entry.data["home_id"] = "home1"
+
+    mock_hass.data[DOMAIN][mock_config_entry.entry_id] = {
+        "api": mock_api,
+        "public_api": None,
+        "flex_devices": [device],
+        "grid_reward_devices": [],
+        "battery_coordinators": {},
+        "vehicle_devices": {},
+        "daily_tracker": MagicMock(),
+        "session_tracker": MagicMock(),
+    }
+
+    mock_api.execute_query_blocks = AsyncMock(
+        return_value={
+            "savings": {"TODAY": {"value": 5.0, "unit": "SEK", "kind": "TOTAL"}},
+            "activity": [],
+            "planned": [],
+        }
+    )
+
+    async_add_entities = MagicMock()
+    await async_setup_entry(mock_hass, mock_config_entry, async_add_entities)
+
+    async_add_entities.assert_called_once()
+    added = async_add_entities.call_args[0][0]
+
+    # Verify entities: 3 savings, 1 activity, 1 planned, 2 flex sensors
+    battery_savings = [e for e in added if isinstance(e, BatterySavingsSensor)]
+    assert len(battery_savings) == 3
+    assert any(isinstance(e, BatteryActivitySensor) for e in added)
+    assert any(isinstance(e, BatteryPlannedActivitySensor) for e in added)
+
+    # Verify coordinator was registered in entry_data
+    coordinators = mock_hass.data[DOMAIN][mock_config_entry.entry_id]["battery_coordinators"]
+    assert "battery1" in coordinators
+    assert isinstance(coordinators["battery1"], TibberBatteryDataCoordinator)
+
+
+async def test_battery_coordinator_update_failure(mock_hass, mock_api):
+    """Test coordinator update failure on API error."""
+    coordinator = TibberBatteryDataCoordinator(mock_hass, mock_api, "home1", "battery1")
+    mock_api.execute_query_blocks = AsyncMock(side_effect=TibberConnectionError("Connection lost"))
+
+    with pytest.raises(UpdateFailed, match="Error communicating with Tibber API"):
+        await coordinator._async_update_data()
+
+    mock_api.execute_query_blocks = AsyncMock(side_effect=RuntimeError("Unexpected crash"))
+    with pytest.raises(UpdateFailed, match="Unexpected error updating battery data"):
+        await coordinator._async_update_data()
+
+
