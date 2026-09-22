@@ -35,6 +35,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     except TibberAuthError as e:
         raise ConfigEntryAuthFailed from e
 
+    # Migrate legacy unique_id (username) to scoped unique_id (username_home_id)
+    if entry.unique_id == entry.data.get("username"):
+        new_unique_id = f"{entry.data['username']}_{entry.data['home_id']}"
+        _LOGGER.debug(
+            "Migrating config entry unique ID from %s to %s",
+            entry.unique_id,
+            new_unique_id,
+        )
+        hass.config_entries.async_update_entry(entry, unique_id=new_unique_id)
+
     daily_tracker = DailyRewardTracker(hass)
     await daily_tracker.async_setup()
 
@@ -84,7 +94,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     entry.async_create_background_task(
         hass,
         api.subscribe_grid_reward(entry.data["home_id"]),
-        "tibber-grid-reward-subscription",
+        f"tibber-grid-reward-subscription-{entry.entry_id}",
     )
 
     entry.async_on_unload(entry.add_update_listener(update_listener))
@@ -134,15 +144,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             return
 
         vehicle_id = next(iter(device.identifiers))[1]
+        target_entry_id = next(iter(device.config_entries), None)
+        if not target_entry_id or target_entry_id not in hass.data.get(DOMAIN, {}):
+            return
 
-        await api.set_departure_time(
-            home_id=entry.data["home_id"],
+        entry_data = hass.data[DOMAIN][target_entry_id]
+        target_api = entry_data["api"]
+        target_entry = hass.config_entries.async_get_entry(target_entry_id)
+        if not target_entry:
+            return
+
+        await target_api.set_departure_time(
+            home_id=target_entry.data["home_id"],
             vehicle_id=vehicle_id,
             day=day,
             time_str=time_str if time_str else None,
         )
 
-    hass.services.async_register(DOMAIN, "set_departure_time", set_departure_time)
+    if not hass.services.has_service(DOMAIN, "set_departure_time"):
+        hass.services.async_register(DOMAIN, "set_departure_time", set_departure_time)
 
     return True
 
@@ -156,7 +176,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
-        hass.services.async_remove(DOMAIN, "set_departure_time")
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        if not hass.data[DOMAIN]:
+            hass.services.async_remove(DOMAIN, "set_departure_time")
 
     return unload_ok

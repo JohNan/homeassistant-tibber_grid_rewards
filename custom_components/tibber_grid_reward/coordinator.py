@@ -141,6 +141,7 @@ class TibberQueryDataCoordinator(DataUpdateCoordinator[TibberBlockData]):
         *,
         battery_id: str | None = None,
         blocks: Sequence[GraphQLQueryBlock | str] | None = None,
+        config_entry: Any = None,
     ) -> None:
         """Initialize the query block data coordinator."""
         effective_device_id = device_id or battery_id
@@ -152,6 +153,7 @@ class TibberQueryDataCoordinator(DataUpdateCoordinator[TibberBlockData]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=config_entry,
             name=effective_name,
             update_interval=update_interval,
         )
