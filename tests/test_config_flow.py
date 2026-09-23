@@ -321,6 +321,10 @@ async def test_unique_id_migration(hass: HomeAssistant):
             AsyncMock(),
         ),
         patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
             "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
             AsyncMock(),
         ),

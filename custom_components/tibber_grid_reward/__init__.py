@@ -10,6 +10,7 @@ from homeassistant.helpers.httpx_client import get_async_client
 from .client import TibberAPI, TibberAuthError
 from .const import DOMAIN
 from .daily_tracker import DailyRewardTracker
+from .hub import TibberAccountHub
 from .public_client import TibberPublicAPI
 from .session_tracker import RewardSessionTracker
 
@@ -21,23 +22,14 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up Tibber Grid Reward from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    accounts = hass.data.setdefault(f"{DOMAIN}_accounts", {})
 
     client = get_async_client(hass)
-
-    api = TibberAPI(
-        entry.data["username"],
-        entry.data["password"],
-        client,
-    )
-
-    try:
-        await api.get_homes()  # Verify credentials
-    except TibberAuthError as e:
-        raise ConfigEntryAuthFailed from e
+    username = entry.data["username"]
 
     # Migrate legacy unique_id (username) to scoped unique_id (username_home_id)
-    if entry.unique_id == entry.data.get("username"):
-        new_unique_id = f"{entry.data['username']}_{entry.data['home_id']}"
+    if entry.unique_id == username:
+        new_unique_id = f"{username}_{entry.data['home_id']}"
         _LOGGER.debug(
             "Migrating config entry unique ID from %s to %s",
             entry.unique_id,
@@ -45,18 +37,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         )
         hass.config_entries.async_update_entry(entry, unique_id=new_unique_id)
 
+    api_key = entry.data.get("api_key") or entry.options.get("api_key")
+
+    if username in accounts:
+        hub: TibberAccountHub = accounts[username]
+        api = hub.api
+        if api_key and (not hub.public_api or hub.public_api._token != api_key):
+            hub.public_api = TibberPublicAPI(api_key, client)
+        public_api = hub.public_api
+    else:
+        api = TibberAPI(
+            username,
+            entry.data["password"],
+            client,
+        )
+        try:
+            await api.get_homes()  # Verify credentials
+        except TibberAuthError as e:
+            raise ConfigEntryAuthFailed from e
+
+        public_api = None
+        if api_key:
+            public_api = TibberPublicAPI(api_key, client)
+
+        hub = TibberAccountHub(hass, username, api, public_api)
+        accounts[username] = hub
+
     daily_tracker = DailyRewardTracker(hass)
     await daily_tracker.async_setup()
 
     session_tracker = RewardSessionTracker(hass)
     await session_tracker.async_load()
 
-    api_key = entry.data.get("api_key") or entry.options.get("api_key")
-    public_api = None
-    if api_key:
-        public_api = TibberPublicAPI(api_key, client)
-
     hass.data[DOMAIN][entry.entry_id] = {
+        "hub": hub,
         "api": api,
         "public_api": public_api,
         "flex_devices": entry.data["flex_devices"],
@@ -75,29 +89,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     def update_grid_reward_sensors(data):
         """Update all grid reward sensors."""
         _LOGGER.debug("Grid reward callback triggered with data: %s", data)
+        entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if not entry_data:
+            return
+
         monthly_reward = data.get("rewardCurrentMonth")
         daily_tracker.update_monthly_reward(monthly_reward)
 
         grid_reward_state = data.get("state", {}).get("__typename")
         session_tracker.update_state(grid_reward_state, daily_tracker.daily_reward)
 
-        for device in hass.data[DOMAIN][entry.entry_id]["grid_reward_devices"]:
+        for device in entry_data.get("grid_reward_devices", []):
             device.update_data(data)
 
-        for coordinator in hass.data[DOMAIN][entry.entry_id][
-            "battery_coordinators"
-        ].values():
+        for coordinator in entry_data.get("battery_coordinators", {}).values():
             coordinator.async_request_refresh()
-
-    api.register_grid_reward_callback(update_grid_reward_sensors)
-
-    entry.async_create_background_task(
-        hass,
-        api.subscribe_grid_reward(entry.data["home_id"]),
-        f"tibber-grid-reward-subscription-{entry.entry_id}",
-    )
-
-    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     def create_vehicle_update_callback(device_id):
         """Create a callback for a specific vehicle."""
@@ -108,26 +114,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             _LOGGER.debug(
                 "Vehicle callback for %s triggered with data: %s", device_id, data
             )
+            entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not entry_data:
+                return
+
             # Iterate a snapshot: some entries (e.g. number.py's battery
             # level manager) may add/remove themselves from this list in
             # response to this very update.
-            for sensor in list(
-                hass.data[DOMAIN][entry.entry_id]["vehicle_devices"][device_id]
-            ):
+            vehicle_devices = entry_data.get("vehicle_devices", {}).get(device_id, [])
+            for sensor in list(vehicle_devices):
                 sensor.update_data(data)
 
         return update_vehicle_sensors
 
+    vehicle_callbacks = {}
     for device in entry.data["flex_devices"]:
         if device["type"] == "vehicle":
             device_id = device["id"]
-            vehicle_callback = create_vehicle_update_callback(device_id)
-            api.register_vehicle_callback(device_id, vehicle_callback)
-            entry.async_create_background_task(
-                hass,
-                api.subscribe_vehicle_state(device_id),
-                f"tibber-vehicle-subscription-{device_id}",
-            )
+            vehicle_callbacks[device_id] = create_vehicle_update_callback(device_id)
+
+    hub.register_home(entry, update_grid_reward_sensors, vehicle_callbacks)
+
+    entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -176,7 +184,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        username = entry.data.get("username")
+        accounts = hass.data.get(f"{DOMAIN}_accounts", {})
+        hub: TibberAccountHub | None = accounts.get(username)
+
+        if hub:
+            hub.unregister_home(entry.entry_id)
+            if not hub.has_entries():
+                await hub.async_close()
+                accounts.pop(username, None)
+
         hass.data[DOMAIN].pop(entry.entry_id, None)
+
         if not hass.data[DOMAIN]:
             hass.services.async_remove(DOMAIN, "set_departure_time")
 
