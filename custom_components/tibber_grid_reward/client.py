@@ -312,7 +312,9 @@ class TibberAPI:
     ) -> None:
         """Register a callback for grid reward updates, optionally scoped to a home_id."""
         if home_id:
-            self._home_callbacks.setdefault(home_id, []).append(callback)
+            cbs = self._home_callbacks.setdefault(home_id, [])
+            if callback not in cbs:
+                cbs.append(callback)
         else:
             self._sub_callback = callback
 
@@ -338,7 +340,9 @@ class TibberAPI:
         self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]
     ) -> None:
         """Register a callback for a vehicle."""
-        self._vehicle_callbacks.setdefault(vehicle_id, []).append(callback)
+        cbs = self._vehicle_callbacks.setdefault(vehicle_id, [])
+        if callback not in cbs:
+            cbs.append(callback)
 
     def unregister_vehicle_callback(
         self, vehicle_id: str, callback: Callable[[dict[str, Any]], None]
@@ -467,6 +471,11 @@ class TibberAPI:
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
 
+                            if not self._ws_reconnect:
+                                if refresh_waiter not in done:
+                                    refresh_waiter.cancel()
+                                break
+
                             if refresh_waiter in done:
                                 self._sub_refresh_event.clear()
                                 if is_connected:
@@ -530,11 +539,15 @@ class TibberAPI:
                                         target_map.pop(sub_info, None)
                                         self._sub_refresh_event.set()
                                 elif msg_type == "error":
+                                    sub_id = data.get("id")
                                     _LOGGER.error(
                                         "Multiplexed subscription error for %s: %s",
-                                        data.get("id"),
+                                        sub_id,
                                         data.get("payload"),
                                     )
+                                    sub_info = sub_map.pop(sub_id, None)
+                                    if sub_info:
+                                        target_map.pop(sub_info, None)
                 except (
                     websockets.exceptions.ConnectionClosedError,
                     websockets.exceptions.ConnectionClosedOK,

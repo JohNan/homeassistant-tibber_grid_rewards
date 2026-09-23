@@ -42,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     if username in accounts:
         hub: TibberAccountHub = accounts[username]
         api = hub.api
-        if not hub.public_api and api_key:
+        if api_key and (not hub.public_api or hub.public_api._token != api_key):
             hub.public_api = TibberPublicAPI(api_key, client)
         public_api = hub.public_api
     else:
@@ -89,18 +89,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     def update_grid_reward_sensors(data):
         """Update all grid reward sensors."""
         _LOGGER.debug("Grid reward callback triggered with data: %s", data)
+        entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        if not entry_data:
+            return
+
         monthly_reward = data.get("rewardCurrentMonth")
         daily_tracker.update_monthly_reward(monthly_reward)
 
         grid_reward_state = data.get("state", {}).get("__typename")
         session_tracker.update_state(grid_reward_state, daily_tracker.daily_reward)
 
-        for device in hass.data[DOMAIN][entry.entry_id]["grid_reward_devices"]:
+        for device in entry_data.get("grid_reward_devices", []):
             device.update_data(data)
 
-        for coordinator in hass.data[DOMAIN][entry.entry_id][
-            "battery_coordinators"
-        ].values():
+        for coordinator in entry_data.get("battery_coordinators", {}).values():
             coordinator.async_request_refresh()
 
     def create_vehicle_update_callback(device_id):
@@ -112,12 +114,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             _LOGGER.debug(
                 "Vehicle callback for %s triggered with data: %s", device_id, data
             )
+            entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+            if not entry_data:
+                return
+
             # Iterate a snapshot: some entries (e.g. number.py's battery
             # level manager) may add/remove themselves from this list in
             # response to this very update.
-            for sensor in list(
-                hass.data[DOMAIN][entry.entry_id]["vehicle_devices"][device_id]
-            ):
+            vehicle_devices = entry_data.get("vehicle_devices", {}).get(device_id, [])
+            for sensor in list(vehicle_devices):
                 sensor.update_data(data)
 
         return update_vehicle_sensors
@@ -179,7 +184,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
         username = entry.data.get("username")
         accounts = hass.data.get(f"{DOMAIN}_accounts", {})
         hub: TibberAccountHub | None = accounts.get(username)
@@ -189,6 +193,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
             if not hub.has_entries():
                 await hub.async_close()
                 accounts.pop(username, None)
+
+        hass.data[DOMAIN].pop(entry.entry_id, None)
 
         if not hass.data[DOMAIN]:
             hass.services.async_remove(DOMAIN, "set_departure_time")

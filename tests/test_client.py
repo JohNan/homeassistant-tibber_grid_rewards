@@ -636,3 +636,89 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
         await client.close_websocket()
         await asyncio.wait_for(sub_task, timeout=3.0)
         assert sub_task.done()
+
+
+def test_callback_registration_deduplication(client: TibberAPI):
+    """Test registering the exact same callback repeatedly does not produce duplicate entries."""
+    cb = MagicMock()
+    vcb = MagicMock()
+
+    client.register_grid_reward_callback(cb, home_id="home_1")
+    client.register_grid_reward_callback(cb, home_id="home_1")
+    assert client._home_callbacks["home_1"] == [cb]
+
+    client.register_vehicle_callback("veh_1", vcb)
+    client.register_vehicle_callback("veh_1", vcb)
+    assert client._vehicle_callbacks["veh_1"] == [vcb]
+
+
+async def test_multiplexed_subscription_server_error_cleans_mapping(client: TibberAPI):
+    """Test server error removes subscription from sub_map and target_map."""
+    mock_token_response = MagicMock(spec=httpx.Response)
+    mock_token_response.status_code = 200
+    mock_token_response.json.return_value = {"token": "test_token"}
+    client._client.post.return_value = mock_token_response
+
+    mock_ws = AsyncMock()
+    mock_ws.closed = False
+    sent_messages: list[dict] = []
+    message_event = asyncio.Event()
+
+    async def fake_send(msg_str):
+        sent_messages.append(json.loads(msg_str))
+        message_event.set()
+
+    mock_ws.send = AsyncMock(side_effect=fake_send)
+
+    async def wait_for_messages(count: int, timeout: float = 3.0):
+        while len(sent_messages) < count:
+            message_event.clear()
+            await asyncio.wait_for(message_event.wait(), timeout=timeout)
+
+    msg_queue: asyncio.Queue[str] = asyncio.Queue()
+    mock_ws.recv.side_effect = msg_queue.get
+
+    active_homes = {"h1"}
+    active_vehicles = set()
+
+    sub_task = None
+    with (
+        patch("jwt.decode", return_value={"exp": 9999999999}),
+        patch(
+            "custom_components.tibber_grid_reward.client.websockets.connect"
+        ) as mock_connect,
+    ):
+        mock_connect.return_value.__aenter__.return_value = mock_ws
+        sub_task = asyncio.create_task(
+            client.run_multiplexed_subscription(lambda: (active_homes, active_vehicles))
+        )
+
+        await wait_for_messages(1)
+        await msg_queue.put(json.dumps({"type": "connection_ack"}))
+        await wait_for_messages(2)
+
+        sub_id = sent_messages[1]["id"]
+
+        # Server sends error for the subscription
+        await msg_queue.put(
+            json.dumps(
+                {
+                    "type": "error",
+                    "id": sub_id,
+                    "payload": [{"message": "Subscription rate limit"}],
+                }
+            )
+        )
+
+        # Allow the event loop to process the incoming error message from msg_queue
+        await asyncio.sleep(0.05)
+
+        # Trigger refresh and verify target is re-subscribed since mapping was purged
+        client.trigger_subscription_refresh()
+        await wait_for_messages(3)
+        assert sent_messages[-1]["type"] == "subscribe"
+        assert sent_messages[-1]["id"] != sub_id
+
+        await client.close_websocket()
+        await asyncio.wait_for(sub_task, timeout=3.0)
+        assert sub_task.done()

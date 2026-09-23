@@ -153,3 +153,29 @@ async def test_get_price_info_fallback(mock_httpx_client):
 
     assert mock_httpx_client.post.call_count == 2
     assert price == {"today": [{"total": 0.99}]}
+
+
+async def test_get_price_info_negative_caching(mock_httpx_client):
+    """Test get_price_info caches None for homes without active subscriptions."""
+    batch_response = MagicMock(spec=httpx.Response)
+    batch_response.status_code = 200
+    batch_response.json.return_value = {
+        "data": {
+            "viewer": {
+                "homes": [
+                    {"id": "no_sub_home", "currentSubscription": None},
+                ]
+            }
+        }
+    }
+    mock_httpx_client.post.return_value = batch_response
+
+    api = TibberPublicAPI("test_token", mock_httpx_client)
+    price = await api.get_price_info("no_sub_home")
+    assert price is None
+    assert mock_httpx_client.post.call_count == 1
+
+    # Subsequent call within 6 hours should hit cache and not make any further network calls
+    price_again = await api.get_price_info("no_sub_home")
+    assert price_again is None
+    assert mock_httpx_client.post.call_count == 1

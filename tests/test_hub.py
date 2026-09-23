@@ -217,3 +217,70 @@ async def test_multi_home_integration_lifecycle(hass: HomeAssistant):
         assert await async_unload_entry(hass, entry_home2) is True
         # Hub has no remaining entries and was closed and removed
         assert "user@test.com" not in hass.data.get(f"{DOMAIN}_accounts", {})
+
+
+async def test_api_key_sync_on_entry_update(hass: HomeAssistant):
+    """Test that a new or rotated API key updates the hub's public_api client."""
+    entry_home1 = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_h1",
+        unique_id="user@test.com_h1",
+        data={
+            "username": "user@test.com",
+            "password": "secret_password",
+            "home_id": "h1",
+            "api_key": "initial_key",
+            "flex_devices": [],
+        },
+    )
+    entry_home2 = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_h2",
+        unique_id="user@test.com_h2",
+        data={
+            "username": "user@test.com",
+            "password": "secret_password",
+            "home_id": "h2",
+            "api_key": "rotated_key",
+            "flex_devices": [],
+        },
+    )
+    entry_home1.add_to_hass(hass)
+    entry_home2.add_to_hass(hass)
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}, {"id": "h2"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry_home1) is True
+        hub = hass.data[f"{DOMAIN}_accounts"]["user@test.com"]
+        assert hub.public_api._token == "initial_key"
+
+        assert await async_setup_entry(hass, entry_home2) is True
+        # Verify hub.public_api was updated with rotated_key
+        assert hub.public_api._token == "rotated_key"
+
+        await async_unload_entry(hass, entry_home1)
+        await async_unload_entry(hass, entry_home2)

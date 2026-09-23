@@ -103,9 +103,9 @@ class TibberPublicAPI:
                 if not home_id:
                     continue
                 price_info = (home.get("currentSubscription") or {}).get("priceInfo")
+                self._price_cache[home_id] = price_info
+                self._price_cache_time[home_id] = now
                 if price_info:
-                    self._price_cache[home_id] = price_info
-                    self._price_cache_time[home_id] = now
                     results[home_id] = price_info
             return results
         except httpx.HTTPStatusError as e:
