@@ -499,17 +499,33 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
     mock_ws = AsyncMock()
     mock_ws.closed = False
     sent_messages: list[dict] = []
+    message_event = asyncio.Event()
 
     async def fake_send(msg_str):
         sent_messages.append(json.loads(msg_str))
+        message_event.set()
 
     mock_ws.send = AsyncMock(side_effect=fake_send)
+
+    async def wait_for_messages(count: int, timeout: float = 3.0):
+        while len(sent_messages) < count:
+            message_event.clear()
+            await asyncio.wait_for(message_event.wait(), timeout=timeout)
 
     msg_queue: asyncio.Queue[str] = asyncio.Queue()
     mock_ws.recv.side_effect = msg_queue.get
 
-    home_cb = MagicMock()
-    veh_cb = MagicMock()
+    home_cb_event = asyncio.Event()
+    veh_cb_event = asyncio.Event()
+
+    def on_home_cb(data):
+        home_cb_event.set()
+
+    def on_veh_cb(data):
+        veh_cb_event.set()
+
+    home_cb = MagicMock(side_effect=on_home_cb)
+    veh_cb = MagicMock(side_effect=on_veh_cb)
     client.register_grid_reward_callback(home_cb, home_id="h1")
     client.register_vehicle_callback("v1", veh_cb)
 
@@ -530,18 +546,16 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
 
         sub_task = asyncio.create_task(client.run_multiplexed_subscription(get_targets))
 
-        # Yield control to let connection initialize and send connection_init
-        await asyncio.sleep(0.01)
-        assert len(sent_messages) == 1
+        # Wait for connection_init to be sent
+        await wait_for_messages(1)
         assert sent_messages[0]["type"] == "connection_init"
 
         # 1. Acknowledge connection
         await msg_queue.put(json.dumps({"type": "connection_ack"}))
-        await asyncio.sleep(0.01)
+        # Wait for subscriptions for h1 and v1
+        await wait_for_messages(3)
 
-        # Client should now have subscribed to both h1 and v1
-        assert len(sent_messages) == 3
-        sub_types = {m["payload"]["operationName"] for m in sent_messages[1:]}
+        sub_types = {m["payload"]["operationName"] for m in sent_messages[1:3]}
         assert sub_types == {"gridRewardsSubscription", "vehicleStateSubscription"}
 
         home_sub_id = next(
@@ -557,7 +571,7 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
 
         # 2. Server sends ping
         await msg_queue.put(json.dumps({"type": "ping"}))
-        await asyncio.sleep(0.01)
+        await wait_for_messages(4)
         assert sent_messages[-1] == {"type": "pong"}
 
         # 3. Next message for grid reward
@@ -577,7 +591,7 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
                 }
             )
         )
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(home_cb_event.wait(), timeout=3.0)
         assert home_cb.call_count == 1
         assert home_cb.call_args[0][0]["homeId"] == "h1"
 
@@ -598,7 +612,7 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
                 }
             )
         )
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(veh_cb_event.wait(), timeout=3.0)
         assert veh_cb.call_count == 1
         assert veh_cb.call_args[0][0]["id"] == "v1"
 
@@ -606,7 +620,7 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
         active_homes.add("h2")
         active_vehicles.remove("v1")
         client.trigger_subscription_refresh()
-        await asyncio.sleep(0.01)
+        await wait_for_messages(6)
 
         # Check new subscribe for h2 and complete for v1 sent
         assert any(
@@ -620,5 +634,5 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
 
         # 6. Close websocket
         await client.close_websocket()
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(sub_task, timeout=3.0)
         assert sub_task.done()
