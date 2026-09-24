@@ -1,0 +1,85 @@
+name: Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: HACS validation
+        uses: hacs/action@22.5.0
+        with:
+          category: integration
+          ignore: brands license
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run hassfest
+        # Awaiting maintained release tags: https://github.com/home-assistant/actions/issues/144
+        uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93
+
+  linter:
+    name: Linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.12
+      - name: Install dependencies
+        run: |
+          pip install ruff
+      - name: Run linter
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
+
+  tests:
+    name: Tests (HA ${{ matrix.ha_version }}, Python ${{ matrix.python_version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The closest fixture release to the HACS minimum (2024.1.6) targets 2024.1.5.
+            # This Home Assistant version predates aiozoneinfo, added in 2024.6.0.
+          - ha_version: 2024.1.5
+            python_version: 3.12
+            fixture_version: 0.13.91
+            needs_tzdata: true
+          - ha_version: 2026.9.3
+            python_version: 3.14
+            fixture_version: 0.13.366
+            needs_tzdata: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+      - name: Install dependencies
+        run: |
+          pip install -r requirements_test.txt "pytest-homeassistant-custom-component==${{ matrix.fixture_version }}"
+      - name: Install legacy time zone data
+        if: matrix.needs_tzdata
+        run: pip install tzdata
+      - name: Verify Home Assistant version and dependencies
+        run: |
+          pip check
+          pip show homeassistant | grep -Fx "Version: ${{ matrix.ha_version }}"
+      - name: Run tests
+        run: pytest
