@@ -8,9 +8,11 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Get version from tag
         id: get_version
         run: echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
@@ -21,6 +23,6 @@ jobs:
           cd custom_components/tibber_grid_reward
           zip tibber_grid_reward.zip -r .
       - name: "Upload zip to release"
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: custom_components/tibber_grid_reward/tibber_grid_reward.zip
