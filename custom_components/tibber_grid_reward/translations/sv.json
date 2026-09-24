@@ -20,7 +20,11 @@
       "reconfigure": {
         "title": "Uppdatera Flex-enheter",
         "data": {
-          "flex_devices": "Välj vilka Flex-enheter som ska styras"
+          "flex_devices": "Välj vilka Flex-enheter som ska styras",
+          "keep_missing_flex_devices": "Behåll enheter som saknas för tillfället"
+        },
+        "data_description": {
+          "keep_missing_flex_devices": "Tibber returnerar inte dessa enheter just nu. Låt en enhet vara markerad för att behålla den i din konfiguration, eller avmarkera den för att ta bort den när du sparar."
         }
       },
       "select_home": {

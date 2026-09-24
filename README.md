@@ -213,6 +213,8 @@ The integration is configured through the Home Assistant UI. You will need to pr
 - **Username and Password**: Your Tibber account credentials used to log into the Tibber mobile app.
 - **API Key (Access Token)**: Used to fetch electricity prices and account data from the Tibber API. You can generate or retrieve your personal access token at [developer.tibber.com/settings/access-token](https://developer.tibber.com/settings/access-token) by logging in with your Tibber credentials.
 
+When reconfiguring the integration, previously selected flex devices that Tibber is not returning right now appear under **Keep currently missing devices**. They are selected by default. Leave a missing device selected to keep its Home Assistant device and entities. Saving the reconfiguration removes Home Assistant devices and entities that are not in the final selection, including devices left behind by earlier reconfigurations. Normal integration setup and reloads do not remove them.
+
 ## Services
 
 ### `tibber_grid_reward.set_departure_time`
