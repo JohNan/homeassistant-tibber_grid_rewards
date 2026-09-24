@@ -8,6 +8,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   hacs:
     name: HACS
@@ -53,16 +56,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The closest fixture release to the HACS minimum (2024.1.6) targets 2024.1.5.
-            # This Home Assistant version predates aiozoneinfo, added in 2024.6.0.
-          - ha_version: 2024.1.5
-            python_version: 3.12
-            fixture_version: 0.13.91
-            needs_tzdata: true
-          - ha_version: 2026.9.3
+          # The 2025.5 and 2025.10 rows pin pycares 4.x; their aiodns allows incompatible 5.x.
+          - ha_version: 2025.5.1
+            phacc_version: 0.13.244
+            pycares_version: 4.11.0
+            python_version: 3.13
+          - ha_version: 2025.10.4
+            phacc_version: 0.13.289
+            pycares_version: 4.11.0
+            python_version: 3.13
+          - ha_version: 2026.3.4
+            phacc_version: 0.13.320
             python_version: 3.14
-            fixture_version: 0.13.366
-            needs_tzdata: false
+          - ha_version: 2026.6.4
+            phacc_version: 0.13.340
+            python_version: 3.14
+          - ha_version: 2026.9.3
+            phacc_version: 0.13.366
+            python_version: 3.14
+          - ha_version: latest
+            python_version: 3.14
+
     steps:
       - uses: actions/checkout@v7
       - name: Set up Python
@@ -72,14 +86,28 @@ jobs:
           cache: pip
           cache-dependency-path: requirements_test.txt
       - name: Install dependencies
+        env:
+          PHACC_VERSION: ${{ matrix.phacc_version }}
+          PYCARES_VERSION: ${{ matrix.pycares_version }}
         run: |
-          pip install -r requirements_test.txt "pytest-homeassistant-custom-component==${{ matrix.fixture_version }}"
-      - name: Install legacy time zone data
-        if: matrix.needs_tzdata
-        run: pip install tzdata
+          package_pins=()
+          if [ -n "$PHACC_VERSION" ]; then
+            package_pins+=("pytest-homeassistant-custom-component==$PHACC_VERSION")
+          fi
+          # Remove this pin and PYCARES_VERSION handling when no tested HA version
+          # is older than 2025.12.4.
+          if [ -n "$PYCARES_VERSION" ]; then
+            package_pins+=("pycares==$PYCARES_VERSION")
+          fi
+          pip install -r requirements_test.txt "${package_pins[@]}"
       - name: Verify Home Assistant version and dependencies
+        env:
+          HA_VERSION: ${{ matrix.ha_version }}
         run: |
           pip check
-          pip show homeassistant | grep -Fx "Version: ${{ matrix.ha_version }}"
+          pip show pytest-homeassistant-custom-component homeassistant
+          if [ "$HA_VERSION" != "latest" ]; then
+            pip show homeassistant | grep -Fx "Version: $HA_VERSION"
+          fi
       - name: Run tests
         run: pytest
