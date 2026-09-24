@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from websockets.asyncio.client import ClientConnection
 
 from custom_components.tibber_grid_reward.client import (
     TibberAPI,
@@ -19,6 +20,27 @@ def client() -> TibberAPI:
     mock_client_instance.post = AsyncMock()
     api = TibberAPI("test@example.com", "password", mock_client_instance)
     return api
+
+
+async def test_close_websocket_with_current_connection(client: TibberAPI):
+    """Closing a current ClientConnection must not use legacy attributes."""
+    websocket = AsyncMock(spec_set=ClientConnection)
+    client._websocket = websocket
+
+    await client.async_close_websocket()
+
+    websocket.close.assert_awaited_once_with()
+    assert client._ws_reconnect is False
+    assert client._sub_refresh_event.is_set()
+
+
+async def test_close_websocket_without_connection_is_repeatable(client: TibberAPI):
+    """Repeated shutdown without a connection leaves reconnection disabled."""
+    await client.async_close_websocket()
+    await client.async_close_websocket()
+
+    assert client._ws_reconnect is False
+    assert client._sub_refresh_event.is_set()
 
 
 async def test_fetch_token(client: TibberAPI):
@@ -496,8 +518,7 @@ async def test_multiplexed_subscription_protocol(client: TibberAPI):
     mock_token_response.json.return_value = {"token": "test_token"}
     client._client.post.return_value = mock_token_response
 
-    mock_ws = AsyncMock()
-    mock_ws.closed = False
+    mock_ws = AsyncMock(spec_set=ClientConnection)
     sent_messages: list[dict] = []
     message_event = asyncio.Event()
 
@@ -659,8 +680,7 @@ async def test_multiplexed_subscription_server_error_cleans_mapping(client: Tibb
     mock_token_response.json.return_value = {"token": "test_token"}
     client._client.post.return_value = mock_token_response
 
-    mock_ws = AsyncMock()
-    mock_ws.closed = False
+    mock_ws = AsyncMock(spec_set=ClientConnection)
     sent_messages: list[dict] = []
     message_event = asyncio.Event()
 

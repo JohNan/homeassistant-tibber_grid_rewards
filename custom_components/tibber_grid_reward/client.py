@@ -56,7 +56,7 @@ class TibberAPI:
     async def close_websocket(self) -> None:
         self._ws_reconnect = False
         self._sub_refresh_event.set()
-        if self._websocket and not self._websocket.closed:
+        if self._websocket is not None:
             await self._websocket.close()
 
     async def async_close_websocket(self) -> None:
