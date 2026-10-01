@@ -1,0 +1,113 @@
+name: Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: HACS validation
+        uses: hacs/action@22.5.0
+        with:
+          category: integration
+          ignore: brands license
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run hassfest
+        # Awaiting maintained release tags: https://github.com/home-assistant/actions/issues/144
+        uses: home-assistant/actions/hassfest@58bff37c8947f690ace498be413a9b78d6f30f93
+
+  linter:
+    name: Linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.12
+      - name: Install dependencies
+        run: |
+          pip install ruff
+      - name: Run linter
+        run: |
+          ruff check --output-format=github .
+          ruff format --check .
+
+  tests:
+    name: Tests (HA ${{ matrix.ha_version }}, Python ${{ matrix.python_version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The 2025.5 and 2025.10 rows pin pycares 4.x; their aiodns allows incompatible 5.x.
+          - ha_version: 2025.5.1
+            phacc_version: 0.13.244
+            pycares_version: 4.11.0
+            python_version: 3.13
+          - ha_version: 2025.10.4
+            phacc_version: 0.13.289
+            pycares_version: 4.11.0
+            python_version: 3.13
+          - ha_version: 2026.3.4
+            phacc_version: 0.13.320
+            python_version: 3.14
+          - ha_version: 2026.6.4
+            phacc_version: 0.13.340
+            python_version: 3.14
+          - ha_version: 2026.9.3
+            phacc_version: 0.13.366
+            python_version: 3.14
+          - ha_version: latest
+            python_version: 3.14
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+      - name: Install dependencies
+        env:
+          PHACC_VERSION: ${{ matrix.phacc_version }}
+          PYCARES_VERSION: ${{ matrix.pycares_version }}
+        run: |
+          package_pins=()
+          if [ -n "$PHACC_VERSION" ]; then
+            package_pins+=("pytest-homeassistant-custom-component==$PHACC_VERSION")
+          fi
+          # Remove this pin and PYCARES_VERSION handling when no tested HA version
+          # is older than 2025.12.4.
+          if [ -n "$PYCARES_VERSION" ]; then
+            package_pins+=("pycares==$PYCARES_VERSION")
+          fi
+          pip install -r requirements_test.txt "${package_pins[@]}"
+      - name: Verify Home Assistant version and dependencies
+        env:
+          HA_VERSION: ${{ matrix.ha_version }}
+        run: |
+          pip check
+          pip show pytest-homeassistant-custom-component homeassistant
+          if [ "$HA_VERSION" != "latest" ]; then
+            pip show homeassistant | grep -Fx "Version: $HA_VERSION"
+          fi
+      - name: Run tests
+        run: pytest
