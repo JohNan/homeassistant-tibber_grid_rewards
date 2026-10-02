@@ -4,8 +4,11 @@ import pytest
 from homeassistant.const import CONF_API_KEY, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.tibber_grid_reward import update_listener
 from custom_components.tibber_grid_reward.client import TibberAuthError
 from custom_components.tibber_grid_reward.const import DOMAIN
 
@@ -138,12 +141,9 @@ async def test_reconfigure_flow(
     mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA)
     mock_entry.add_to_hass(hass)
 
-    with patch(
-        "custom_components.tibber_grid_reward.async_setup_entry", return_value=True
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
-        )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
@@ -151,14 +151,17 @@ async def test_reconfigure_flow(
     # Check that current device is pre-selected
     key = next(k for k in result["data_schema"].schema if k.schema == "flex_devices")
     assert key.default() == ["flex1"]
+    assert all(
+        key.schema != "keep_missing_flex_devices"
+        for key in result["data_schema"].schema
+    )
 
     # Simulate user selecting a different set of devices
-    with patch(
-        "custom_components.tibber_grid_reward.async_setup_entry", return_value=True
-    ) as mock_setup_entry:
+    with patch.object(
+        hass.config_entries, "async_reload", new_callable=AsyncMock
+    ) as reload_entry:
         result2 = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {"flex_devices": ["flex2"]},
+            result["flow_id"], {"flex_devices": ["flex2"]}
         )
 
     assert result2["type"] == FlowResultType.ABORT
@@ -167,7 +170,339 @@ async def test_reconfigure_flow(
     assert len(mock_entry.data["flex_devices"]) == 1
     assert mock_entry.data["flex_devices"][0]["id"] == "flex2"
     assert mock_entry.data["flex_devices"][0]["name"] == "Battery"
-    assert len(mock_setup_entry.mock_calls) == 1
+    reload_entry.assert_awaited_once_with(mock_entry.entry_id)
+
+
+async def test_reconfigure_reloads_once_with_update_listener(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """Updating an active entry must not reload it both directly and by listener."""
+    mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA.copy())
+    mock_entry.add_to_hass(hass)
+    mock_entry.add_update_listener(update_listener)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+    with patch.object(
+        hass.config_entries, "async_reload", new_callable=AsyncMock
+    ) as reload_entry:
+        result2 = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"flex_devices": ["flex2"]}
+        )
+        await hass.async_block_till_done()
+
+    assert result2["reason"] == "reconfigure_successful"
+    reload_entry.assert_awaited_once_with(mock_entry.entry_id)
+
+
+async def test_reconfigure_save_removes_deselected_and_legacy_devices(
+    hass: HomeAssistant, mock_tibber_api
+):
+    """Saving removes unselected registry devices before any entry reload."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **MOCK_CONFIG_DATA,
+            "flex_devices": [
+                {"id": "flex1", "type": "vehicle", "name": "Car 1"},
+                {"id": "flex2", "type": "battery", "name": "Battery"},
+                {"id": "flex3", "type": "vehicle", "name": "Missing car"},
+            ],
+        },
+    )
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**MOCK_CONFIG_DATA, "home_id": "home2"},
+    )
+    entry.add_to_hass(hass)
+    other_entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    entities = er.async_get(hass)
+    parent = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}
+    )
+    removed_available = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex1")}
+    )
+    retained = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex2")}
+    )
+    removed_missing = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex3")}
+    )
+    legacy_orphan = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex4")}
+    )
+    same_id_other_home = devices.async_get_or_create(
+        config_entry_id=other_entry.entry_id, identifiers={(DOMAIN, "flex1")}
+    )
+    removed_entity = entities.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "flex1_state",
+        config_entry=entry,
+        device_id=removed_available.id,
+    )
+    legacy_entity = entities.async_get_or_create(
+        "sensor", DOMAIN, "flex4_state", config_entry=entry, device_id=legacy_orphan.id
+    )
+
+    with patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id}
+        )
+        assert devices.async_get(legacy_orphan.id) is not None
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"flex_devices": ["flex2"], "keep_missing_flex_devices": []},
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert removed_available.id not in {
+        device.id
+        for device in dr.async_entries_for_config_entry(devices, entry.entry_id)
+    }
+    assert devices.async_get(removed_missing.id) is None
+    assert devices.async_get(legacy_orphan.id) is None
+    assert entities.async_get(removed_entity.entity_id) is None
+    assert entities.async_get(legacy_entity.entity_id) is None
+    assert devices.async_get(retained.id) is not None
+    assert devices.async_get(parent.id) is not None
+    assert devices.async_get(same_id_other_home.id) is not None
+    assert same_id_other_home.id in {
+        device.id
+        for device in dr.async_entries_for_config_entry(devices, other_entry.entry_id)
+    }
+
+
+async def test_reconfigure_save_removes_legacy_device_without_selection_change(
+    hass: HomeAssistant, mock_tibber_api
+):
+    """Saving an unchanged selection still removes older leftover devices."""
+    entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA.copy())
+    entry.add_to_hass(hass)
+    devices = dr.async_get(hass)
+    entities = er.async_get(hass)
+    retained = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex1")}
+    )
+    legacy_orphan = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "old_flex")}
+    )
+    legacy_entity = entities.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "old_flex_state",
+        config_entry=entry,
+        device_id=legacy_orphan.id,
+    )
+
+    with patch.object(hass.config_entries, "async_reload", new_callable=AsyncMock):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": "reconfigure", "entry_id": entry.entry_id}
+        )
+        assert devices.async_get(legacy_orphan.id) is not None
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"flex_devices": ["flex1"]}
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data["flex_devices"] == MOCK_CONFIG_DATA["flex_devices"]
+    assert devices.async_get(legacy_orphan.id) is None
+    assert entities.async_get(legacy_entity.entity_id) is None
+    assert devices.async_get(retained.id) is not None
+
+
+async def test_reconfigure_keeps_missing_device_and_adds_available_device(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """A missing saved device stays selected while a newly available one is added."""
+    mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA.copy())
+    mock_entry.add_to_hass(hass)
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {
+        "flexDevices": [
+            {
+                "__typename": "GridRewardBattery",
+                "batteryId": "flex2",
+                "shortName": "Battery",
+            }
+        ]
+    }
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+
+    assert result["type"] == FlowResultType.FORM
+    schema = result["data_schema"].schema
+    available_key = next(key for key in schema if key.schema == "flex_devices")
+    missing_key = next(
+        key for key in schema if key.schema == "keep_missing_flex_devices"
+    )
+    assert available_key.default() == []
+    assert missing_key.default() == ["flex1"]
+    assert schema[missing_key].options == {"flex1": "Car 1"}
+
+    # A changing API response must not alter the choices already shown to the user.
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {"flexDevices": []}
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"flex_devices": ["flex2"]}
+    )
+
+    assert result2["type"] == FlowResultType.ABORT
+    assert result2["reason"] == "reconfigure_successful"
+    assert mock_entry.data["flex_devices"] == [
+        {"id": "flex1", "type": "vehicle", "name": "Car 1"},
+        {"id": "flex2", "type": "battery", "name": "Battery"},
+    ]
+    mock_tibber_api.return_value.validate_grid_reward.assert_awaited_once()
+
+
+async def test_reconfigure_removes_only_unchecked_missing_device(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """Each missing device can be kept or removed independently."""
+    saved_devices = [
+        {"id": "flex1", "type": "vehicle", "name": "Car 1"},
+        {"id": "flex3", "type": "battery", "name": "Old Battery"},
+    ]
+    mock_entry = MockConfigEntry(
+        domain=DOMAIN, data={**MOCK_CONFIG_DATA, "flex_devices": saved_devices}
+    )
+    mock_entry.add_to_hass(hass)
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {
+        "flexDevices": [
+            {
+                "__typename": "GridRewardBattery",
+                "batteryId": "flex2",
+                "shortName": "New Battery",
+            }
+        ]
+    }
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+    schema = result["data_schema"].schema
+    missing_key = next(
+        key for key in schema if key.schema == "keep_missing_flex_devices"
+    )
+    assert missing_key.default() == ["flex1", "flex3"]
+    assert schema[missing_key].options == {
+        "flex1": "Car 1",
+        "flex3": "Old Battery",
+    }
+
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"flex_devices": ["flex2"], "keep_missing_flex_devices": ["flex1"]},
+    )
+
+    assert result2["reason"] == "reconfigure_successful"
+    assert mock_entry.data["flex_devices"] == [
+        {"id": "flex1", "type": "vehicle", "name": "Car 1"},
+        {"id": "flex2", "type": "battery", "name": "New Battery"},
+    ]
+
+
+async def test_reconfigure_removes_missing_device_without_new_device(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """A missing device can be removed when other saved devices remain available."""
+    mock_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            **MOCK_CONFIG_DATA,
+            "flex_devices": [
+                {"id": "flex1", "type": "vehicle", "name": "Car 1"},
+                {"id": "flex2", "type": "battery", "name": "Battery"},
+            ],
+        },
+    )
+    mock_entry.add_to_hass(hass)
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {
+        "flexDevices": [
+            {
+                "__typename": "GridRewardBattery",
+                "batteryId": "flex2",
+                "shortName": "Battery",
+            }
+        ]
+    }
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+    schema = result["data_schema"].schema
+    available_key = next(key for key in schema if key.schema == "flex_devices")
+    assert available_key.default() == ["flex2"]
+
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"flex_devices": ["flex2"], "keep_missing_flex_devices": []},
+    )
+
+    assert result2["reason"] == "reconfigure_successful"
+    assert mock_entry.data["flex_devices"] == [
+        {"id": "flex2", "type": "battery", "name": "Battery"}
+    ]
+
+
+async def test_reconfigure_keeps_each_device_once_when_saved_ids_repeat(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """Repeated IDs in old entry data cannot create duplicate device subscriptions."""
+    saved_device = {"id": "flex1", "type": "vehicle", "name": "Car 1"}
+    mock_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**MOCK_CONFIG_DATA, "flex_devices": [saved_device, saved_device.copy()]},
+    )
+    mock_entry.add_to_hass(hass)
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {
+        "flexDevices": [
+            {
+                "__typename": "GridRewardBattery",
+                "batteryId": "flex2",
+                "shortName": "Battery",
+            }
+        ]
+    }
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"flex_devices": ["flex2"], "keep_missing_flex_devices": ["flex1"]},
+    )
+
+    assert result2["reason"] == "reconfigure_successful"
+    assert mock_entry.data["flex_devices"] == [
+        saved_device,
+        {"id": "flex2", "type": "battery", "name": "Battery"},
+    ]
+
+
+async def test_reconfigure_aborts_when_tibber_returns_no_flex_devices(
+    hass: HomeAssistant, mock_tibber_api, mock_tibber_public_api
+):
+    """The existing no-device abort remains when Tibber reports no devices."""
+    mock_entry = MockConfigEntry(domain=DOMAIN, data=MOCK_CONFIG_DATA.copy())
+    mock_entry.add_to_hass(hass)
+    mock_tibber_api.return_value.validate_grid_reward.return_value = {"flexDevices": []}
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "reconfigure", "entry_id": mock_entry.entry_id}
+    )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_flex_device"
+    assert mock_entry.data["flex_devices"] == [
+        {"id": "flex1", "type": "vehicle", "name": "Car 1"}
+    ]
 
 
 async def test_options_flow(hass: HomeAssistant, mock_tibber_public_api):
