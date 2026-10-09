@@ -103,7 +103,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             device.update_data(data)
 
         for coordinator in entry_data.get("battery_coordinators", {}).values():
-            coordinator.async_request_refresh()
+            entry.async_create_task(
+                hass,
+                coordinator.async_request_refresh(),
+                name=f"{DOMAIN} battery refresh",
+            )
 
     def create_vehicle_update_callback(device_id):
         """Create a callback for a specific vehicle."""
