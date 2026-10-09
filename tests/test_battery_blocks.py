@@ -410,6 +410,30 @@ async def test_coordinator_with_blocks_sequence(hass):
     assert coordinator.data["savings"]["TODAY"]["value"] == 10.0
 
 
+async def test_coordinator_only_notifies_when_telemetry_changes(hass):
+    """Repeated identical telemetry must not trigger entity state writes."""
+    api = MagicMock(spec=TibberAPI)
+    api.execute_query_blocks = AsyncMock(
+        return_value={"savings": {"TODAY": {"value": 10.0}}}
+    )
+    coordinator = TibberBatteryDataCoordinator(hass, api, "home1", "battery1")
+    values = []
+    unsubscribe = coordinator.async_add_listener(
+        lambda: values.append(coordinator.data.savings["TODAY"]["value"])
+    )
+    try:
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+        assert values == [10.0]
+
+        api.execute_query_blocks.return_value = {"savings": {"TODAY": {"value": 15.0}}}
+        await coordinator.async_refresh()
+        assert values == [10.0, 15.0]
+    finally:
+        unsubscribe()
+        await coordinator.async_shutdown()
+
+
 def test_query_composer_null_data_handling():
     """Test parse_response handles null or missing data without raising TypeError."""
     composer = BatteryQueryComposer()
