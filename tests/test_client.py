@@ -213,6 +213,56 @@ async def test_set_departure_time_offline_fallback(client: TibberAPI):
     }
 
 
+@pytest.mark.parametrize(
+    ("method", "arguments", "expected_requests"),
+    [
+        ("set_battery_level", ("home1", "vehicle1", 65), 1),
+        ("set_departure_time", ("home1", "vehicle1", "monday", "07:00"), 2),
+        ("set_smart_charging_enabled", ("home1", "vehicle1", True), 2),
+    ],
+)
+async def test_set_battery_level_and_other_settings_reports_graphql_rejection(
+    client: TibberAPI, method, arguments, expected_requests
+):
+    """Rejected HTTP-200 mutations must raise with the backend error detail."""
+    response = httpx.Response(
+        200,
+        json={
+            "data": {"me": None},
+            "errors": [{"message": "Vehicle setting rejected"}],
+        },
+        request=httpx.Request("POST", "https://app.tibber.com/v4/gql"),
+    )
+    client._client.post.return_value = response
+
+    with (
+        patch.object(client, "fetch_token", AsyncMock(return_value="test_token")),
+        pytest.raises(TibberException, match="Vehicle setting rejected"),
+    ):
+        await getattr(client, method)(*arguments)
+
+    assert client._client.post.call_count == expected_requests
+
+
+async def test_set_battery_level(client: TibberAPI):
+    """Manual battery writes send the offline key and string percentage."""
+    client._client.post.return_value = httpx.Response(
+        200,
+        json={"data": {"me": {"setVehicleSettings": [{"__typename": "Setting"}]}}},
+        request=httpx.Request("POST", "https://app.tibber.com/v4/gql"),
+    )
+
+    with patch.object(client, "fetch_token", AsyncMock(return_value="test_token")):
+        await client.set_battery_level("home1", "vehicle1", 65)
+
+    assert client._client.post.call_count == 1
+    assert client._client.post.call_args.kwargs["json"]["variables"] == {
+        "homeId": "home1",
+        "vehicleId": "vehicle1",
+        "settings": [{"key": "offline.vehicle.batteryLevel", "value": "65"}],
+    }
+
+
 async def test_get_battery_details(client: TibberAPI):
     """Test fetching consolidated battery details."""
     mock_token_response = MagicMock(spec=httpx.Response)

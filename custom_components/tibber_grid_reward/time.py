@@ -41,7 +41,13 @@ async def async_setup_entry(
         if device["type"] == "vehicle":
             vehicle_id = device["id"]
             for day in range(7):
-                entity = DepartureTimeEntity(api, config_entry.entry_id, device, day)
+                entity = DepartureTimeEntity(
+                    api,
+                    config_entry.entry_id,
+                    device,
+                    day,
+                    config_entry.data["home_id"],
+                )
                 entities.append(entity)
                 hass.data[DOMAIN][config_entry.entry_id]["vehicle_devices"][
                     vehicle_id
@@ -53,11 +59,11 @@ async def async_setup_entry(
 class DepartureTimeEntity(TimeEntity):
     """Representation of a departure time entity."""
 
-    def __init__(self, api, entry_id, device, day_index):
+    def __init__(self, api, entry_id, device, day_index, home_id: str):
         """Initialize the time entity."""
         self._api = api
         self._entry_id = entry_id
-        self._home_id = api.home_id
+        self._home_id = home_id
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
         self._day_index = day_index

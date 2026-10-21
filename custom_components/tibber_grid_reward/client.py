@@ -267,9 +267,15 @@ class TibberAPI:
                     GRAPHQL_URL, headers=headers, json=payload_offline
                 )
                 response_offline.raise_for_status()
+                if errors := response_offline.json().get("errors"):
+                    raise TibberException(
+                        f"Failed to set smart charging for vehicle {vehicle_id}: {errors}"
+                    )
             _LOGGER.debug("Successfully updated smart charging setting.")
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
+        except TibberException:
+            raise
         except Exception as e:
             raise TibberException from e
 
@@ -736,9 +742,15 @@ class TibberAPI:
                     GRAPHQL_URL, headers=headers, json=payload_offline
                 )
                 response_offline.raise_for_status()
+                if errors := response_offline.json().get("errors"):
+                    raise TibberException(
+                        f"Failed to set departure time for vehicle {vehicle_id}: {errors}"
+                    )
             _LOGGER.debug("Successfully set departure time.")
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
+        except TibberException:
+            raise
         except Exception as e:
             raise TibberException from e
 
@@ -781,8 +793,14 @@ class TibberAPI:
                 GRAPHQL_URL, headers=headers, json=payload
             )
             response.raise_for_status()
+            if errors := response.json().get("errors"):
+                raise TibberException(
+                    f"Failed to set battery level for vehicle {vehicle_id}: {errors}"
+                )
             _LOGGER.debug("Successfully set battery level.")
         except httpx.HTTPStatusError as e:
             raise TibberConnectionError from e
+        except TibberException:
+            raise
         except Exception as e:
             raise TibberException from e

@@ -21,7 +21,7 @@ def device():
 
 @pytest.fixture
 def sensor(mock_api, device):
-    sensor = DepartureTimeEntity(mock_api, "test_entry_id", device, 0)
+    sensor = DepartureTimeEntity(mock_api, "test_entry_id", device, 0, "test_home_id")
     sensor.hass = MagicMock()
     sensor.async_write_ha_state = MagicMock()
     return sensor
@@ -107,7 +107,7 @@ def test_update_data_no_matching_key(sensor):
 async def test_async_set_value(sensor, mock_api):
     await sensor.async_set_value(datetime.time(9, 30))
     mock_api.set_departure_time.assert_called_once_with(
-        home_id=mock_api.home_id,
+        home_id="test_home_id",
         vehicle_id="vehicle1",
         day="monday",
         time_str="09:30",
@@ -118,7 +118,7 @@ async def test_async_set_value(sensor, mock_api):
 
 def test_update_data_no_hass(mock_api, device):
     """Test update_data when self.hass is None does not raise RuntimeError."""
-    entity = DepartureTimeEntity(mock_api, "test_entry_id", device, 0)
+    entity = DepartureTimeEntity(mock_api, "test_entry_id", device, 0, "test_home_id")
     assert entity.hass is None
 
     # Should update native_value without raising RuntimeError

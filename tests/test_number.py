@@ -34,7 +34,12 @@ def async_add_entities():
 @pytest.fixture
 def manager(mock_api, device, vehicle_devices, async_add_entities):
     manager = _BatteryLevelEntityManager(
-        mock_api, "test_entry_id", device, vehicle_devices, async_add_entities
+        mock_api,
+        "test_entry_id",
+        device,
+        vehicle_devices,
+        async_add_entities,
+        "test_home_id",
     )
     vehicle_devices.append(manager)
     return manager
@@ -87,7 +92,11 @@ def test_manager_resolves_only_once(manager, vehicle_devices, async_add_entities
 @pytest.fixture
 def entity(mock_api, device):
     entity = BatteryLevelEntity(
-        mock_api, "test_entry_id", device, {"isAlive": False, "battery": {"level": 40}}
+        mock_api,
+        "test_entry_id",
+        device,
+        {"isAlive": False, "battery": {"level": 40}},
+        "test_home_id",
     )
     # Simulate having already been added to hass by async_add_entities,
     # like every real entity by the time update_data() would normally run.
@@ -115,7 +124,11 @@ def test_update_data_before_added_to_hass_is_a_noop(mock_api, device):
     background task, not synchronously. A vehicleState update landing
     before that finishes must not crash trying to write state."""
     entity = BatteryLevelEntity(
-        mock_api, "test_entry_id", device, {"isAlive": False, "battery": {"level": 40}}
+        mock_api,
+        "test_entry_id",
+        device,
+        {"isAlive": False, "battery": {"level": 40}},
+        "test_home_id",
     )
     entity.async_write_ha_state = MagicMock()
     assert entity.hass is None
@@ -152,7 +165,7 @@ def test_update_data_vehicle_later_reports_online(entity):
 async def test_async_set_native_value(entity, mock_api):
     await entity.async_set_native_value(60)
     mock_api.set_battery_level.assert_called_once_with(
-        home_id=mock_api.home_id,
+        home_id="test_home_id",
         vehicle_id="vehicle1",
         level=60,
     )

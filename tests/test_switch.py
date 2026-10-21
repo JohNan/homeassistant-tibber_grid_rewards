@@ -14,7 +14,7 @@ from custom_components.tibber_grid_reward.switch import (
 @pytest.fixture
 def mock_api():
     api = MagicMock()
-    api.home_id = "test_home_id"
+    api.home_id = None
     api.set_smart_charging_enabled = AsyncMock()
     return api
 
@@ -26,7 +26,7 @@ def device():
 
 @pytest.fixture
 def switch_entity(mock_api, device):
-    switch = SmartChargingSwitch(mock_api, "test_entry_id", device)
+    switch = SmartChargingSwitch(mock_api, "test_entry_id", device, "test_home_id")
     switch.async_write_ha_state = MagicMock()
     return switch
 
@@ -114,6 +114,7 @@ async def test_async_setup_entry(mock_api, device):
     hass = MagicMock()
     config_entry = MagicMock()
     config_entry.entry_id = "test_entry"
+    config_entry.data = {"home_id": "test_home_id"}
 
     hass.data = {
         DOMAIN: {

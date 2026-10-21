@@ -39,7 +39,12 @@ async def async_setup_entry(
             vehicle_id = device["id"]
             vehicle_devices = entry_data["vehicle_devices"][vehicle_id]
             manager = _BatteryLevelEntityManager(
-                api, config_entry.entry_id, device, vehicle_devices, async_add_entities
+                api,
+                config_entry.entry_id,
+                device,
+                vehicle_devices,
+                async_add_entities,
+                config_entry.data["home_id"],
             )
             vehicle_devices.append(manager)
 
@@ -67,9 +72,18 @@ class _BatteryLevelEntityManager:
     Entities).
     """
 
-    def __init__(self, api, entry_id, device, vehicle_devices, async_add_entities):
+    def __init__(
+        self,
+        api,
+        entry_id,
+        device,
+        vehicle_devices,
+        async_add_entities,
+        home_id: str,
+    ):
         self._api = api
         self._entry_id = entry_id
+        self._home_id = home_id
         self._device = device
         self._vehicle_devices = vehicle_devices
         self._async_add_entities = async_add_entities
@@ -95,7 +109,13 @@ class _BatteryLevelEntityManager:
                 "Vehicle %s confirmed offline; adding its battery level entity",
                 self._device["id"],
             )
-            entity = BatteryLevelEntity(self._api, self._entry_id, self._device, data)
+            entity = BatteryLevelEntity(
+                self._api,
+                self._entry_id,
+                self._device,
+                data,
+                self._home_id,
+            )
             self._vehicle_devices.append(entity)
             self._async_add_entities([entity])
         else:
@@ -119,11 +139,11 @@ class BatteryLevelEntity(NumberEntity):
     _attr_native_step = 1
     _attr_native_unit_of_measurement = PERCENTAGE
 
-    def __init__(self, api, entry_id, device, data: dict[str, Any]):
+    def __init__(self, api, entry_id, device, data: dict[str, Any], home_id: str):
         """Initialize the number entity, populated from the data that confirmed it."""
         self._api = api
         self._entry_id = entry_id
-        self._home_id = api.home_id
+        self._home_id = home_id
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
         self._attr_name = f"{self._device_name} Battery Level"

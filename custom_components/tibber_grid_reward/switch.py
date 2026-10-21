@@ -29,7 +29,12 @@ async def async_setup_entry(
     for device in flex_devices:
         if device["type"] == "vehicle":
             vehicle_id = device["id"]
-            entity = SmartChargingSwitch(api, config_entry.entry_id, device)
+            entity = SmartChargingSwitch(
+                api,
+                config_entry.entry_id,
+                device,
+                config_entry.data["home_id"],
+            )
             entities.append(entity)
             entry_data["grid_reward_devices"].append(entity)
             entry_data["vehicle_devices"][vehicle_id].append(entity)
@@ -40,11 +45,11 @@ async def async_setup_entry(
 class SmartChargingSwitch(SwitchEntity):
     """Representation of a Smart Charging switch entity."""
 
-    def __init__(self, api, entry_id: str, device: dict[str, Any]):
+    def __init__(self, api, entry_id: str, device: dict[str, Any], home_id: str):
         """Initialize the switch entity."""
         self._api = api
         self._entry_id = entry_id
-        self._home_id = api.home_id
+        self._home_id = home_id
         self._device_id = device["id"]
         self._device_name = device.get("name", self._device_id)
         self._attr_name = f"{self._device_name} Smart Charging"
