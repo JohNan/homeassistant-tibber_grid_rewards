@@ -4,8 +4,23 @@
       "user": {
         "title": "Tibber Grid Rewards",
         "data": {
-          "username": "Användarnamn (e-post)",
-          "password": "Lösenord"
+          "username": "Användarnamn (e-postadress)",
+          "password": "Lösenord",
+          "api_key": "API-nyckel"
+        }
+      },
+      "reauth": {
+        "title": "Logga in på ditt Tibber-konto igen",
+        "description": "Logga in på ditt Tibber-konto igen för att fortsätta använda Tibber Grid Rewards. Ange ditt lösenord och din API-nyckel igen.",
+        "data": {
+          "password": "Lösenord",
+          "api_key": "API-nyckel"
+        }
+      },
+      "reconfigure": {
+        "title": "Uppdatera Flex-enheter",
+        "data": {
+          "flex_devices": "Välj vilka Flex-enheter som ska styras"
         }
       },
       "select_home": {
@@ -15,25 +30,38 @@
         }
       },
       "select_devices": {
-        "title": "Välj enheter",
+        "title": "Välj Flex-enheter",
         "data": {
-          "flex_devices": "Enheter"
+          "flex_devices": "Flex-enheter"
         }
       }
     },
     "error": {
       "auth": "Ogiltiga inloggningsuppgifter.",
+      "invalid_auth": "Ogiltig API-nyckel.",
       "unknown": "Ett okänt fel inträffade."
     },
     "abort": {
       "no_homes": "Inga hem hittades på ditt Tibber-konto.",
-      "no_grid_rewards": "Det valda hemmet har inte Grid Rewards aktiverat.",
-      "no_flex_device": "Ett hem med Grid Rewards hittades, men ingen kompatibel bil eller batteri är associerat med det.",
-      "duplicate": "En konfiguration för detta användarnamn finns redan.",
+      "no_grid_rewards": "Grid Rewards är inte aktiverat för det valda hemmet.",
+      "no_flex_device": "Ett hem med Grid Rewards hittades, men inget kompatibelt fordon eller batteri är kopplat till det.",
+      "already_configured": "En konfiguration för detta användarnamn finns redan.",
+      "reconfigure_successful": "Integrationen har konfigurerats om.",
+      "reauth_successful": "Du har loggat in igen.",
       "unknown": "Ett okänt fel inträffade."
     }
   },
-  "progress": {
-    "validating": "Validerar status för Grid Rewards..."
+  "options": {
+    "step": {
+      "init": {
+        "title": "Inställningar för Tibber Grid Rewards",
+        "data": {
+          "api_key": "API-nyckel"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ogiltig API-nyckel."
+    }
   }
 }

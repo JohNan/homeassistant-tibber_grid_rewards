@@ -36,7 +36,6 @@ omit = [
     "*/config_flow.py",
     "*/manifest.json",
     "*/services.yaml",
-    "*/strings.json",
     "*/translations/*",
 ]
 

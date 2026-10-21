@@ -2,7 +2,7 @@
     "config": {
         "step": {
             "user": {
-                "title": "Tibber Grid Reward",
+                "title": "Tibber Grid Rewards",
                 "data": {
                     "username": "Username (email)",
                     "password": "Password",
@@ -47,7 +47,7 @@
             "no_flex_device": "A home with grid rewards was found, but no compatible vehicle or battery is associated with it.",
             "already_configured": "An entry for this username already exists.",
             "reconfigure_successful": "The integration has been reconfigured successfully.",
-            "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+            "reauth_successful": "Re-authentication was successful",
             "unknown": "An unknown error occurred."
         }
     },
