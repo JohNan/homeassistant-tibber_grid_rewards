@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.tibber_grid_reward import async_setup_entry, async_unload_entry
@@ -217,6 +219,94 @@ async def test_multi_home_integration_lifecycle(hass: HomeAssistant):
         assert await async_unload_entry(hass, entry_home2) is True
         # Hub has no remaining entries and was closed and removed
         assert "user@test.com" not in hass.data.get(f"{DOMAIN}_accounts", {})
+
+
+async def test_setup_preserves_unselected_registry_device_and_entities(
+    hass: HomeAssistant,
+):
+    """A normal setup preserves devices until reconfiguration is saved."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_h1",
+        data={
+            "username": "user@test.com",
+            "password": "secret_password",
+            "home_id": "h1",
+            "flex_devices": [
+                {"id": "flex2", "type": "battery", "name": "Current battery"},
+                {"id": "flex3", "type": "vehicle", "name": "Kept missing car"},
+            ],
+        },
+    )
+    other_entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_h2",
+        data={
+            "username": "user@test.com",
+            "password": "secret_password",
+            "home_id": "h2",
+            "flex_devices": [{"id": "flex1", "type": "vehicle"}],
+        },
+    )
+    entry.add_to_hass(hass)
+    other_entry.add_to_hass(hass)
+
+    devices = dr.async_get(hass)
+    entities = er.async_get(hass)
+    parent = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}
+    )
+    unselected = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex1")}
+    )
+    current = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex2")}
+    )
+    kept_missing = devices.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "flex3")}
+    )
+    same_id_other_home = devices.async_get_or_create(
+        config_entry_id=other_entry.entry_id, identifiers={(DOMAIN, "flex1")}
+    )
+    unselected_entity = entities.async_get_or_create(
+        "sensor", DOMAIN, "flex1_state", config_entry=entry, device_id=unselected.id
+    )
+    current_entity = entities.async_get_or_create(
+        "sensor", DOMAIN, "flex2_state", config_entry=entry, device_id=current.id
+    )
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}, {"id": "h2"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            AsyncMock(),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry) is True
+        await hass.async_block_till_done()
+
+    assert devices.async_get(unselected.id) is not None
+    assert entities.async_get(unselected_entity.entity_id) is not None
+    assert devices.async_get(parent.id) is not None
+    assert devices.async_get(current.id) is not None
+    assert devices.async_get(kept_missing.id) is not None
+    assert devices.async_get(same_id_other_home.id) is not None
+    assert entities.async_get(current_entity.entity_id) is not None
 
 
 async def test_api_key_sync_on_entry_update(hass: HomeAssistant):
