@@ -11,6 +11,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.tibber_grid_reward import async_setup_entry, async_unload_entry
 from custom_components.tibber_grid_reward.client import TibberAPI
 from custom_components.tibber_grid_reward.const import DOMAIN
+from custom_components.tibber_grid_reward.coordinator import (
+    TibberBatteryDataCoordinator,
+)
 from custom_components.tibber_grid_reward.hub import TibberAccountHub
 from custom_components.tibber_grid_reward.public_client import TibberPublicAPI
 
@@ -284,3 +287,68 @@ async def test_api_key_sync_on_entry_update(hass: HomeAssistant):
 
         await async_unload_entry(hass, entry_home1)
         await async_unload_entry(hass, entry_home2)
+
+
+async def test_grid_reward_push_refreshes_batteries(hass, mock_tibber_api):
+    """A WebSocket update must refresh every battery's telemetry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user@test.com_home1",
+        data={
+            "username": "user@test.com",
+            "password": "password",
+            "home_id": "home1",
+            "flex_devices": [
+                {"id": "battery1", "type": "battery"},
+                {"id": "battery2", "type": "battery"},
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    mock_tibber_api.get_homes = AsyncMock(return_value=[{"id": "home1"}])
+    mock_tibber_api.execute_query_blocks = AsyncMock(
+        return_value={"savings": {"TODAY": {"value": 12.5}}}
+    )
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI",
+            return_value=mock_tibber_api,
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry)
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        coordinators = entry_data["battery_coordinators"]
+        for battery_id in ("battery1", "battery2"):
+            coordinators[battery_id] = TibberBatteryDataCoordinator(
+                hass, mock_tibber_api, "home1", battery_id, config_entry=entry
+            )
+
+        try:
+            entry_data["hub"]._home_callbacks[entry.entry_id]({})
+            await hass.async_block_till_done()
+
+            for coordinator in coordinators.values():
+                assert coordinator.data is not None
+                assert coordinator.data.savings["TODAY"]["value"] == 12.5
+
+            assert await async_unload_entry(hass, entry)
+        finally:
+            for coordinator in coordinators.values():
+                await coordinator.async_shutdown()

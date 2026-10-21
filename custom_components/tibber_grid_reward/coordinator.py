@@ -156,6 +156,7 @@ class TibberQueryDataCoordinator(DataUpdateCoordinator[TibberBlockData]):
             config_entry=config_entry,
             name=effective_name,
             update_interval=update_interval,
+            always_update=False,
         )
         self.api = api
         self.home_id = home_id

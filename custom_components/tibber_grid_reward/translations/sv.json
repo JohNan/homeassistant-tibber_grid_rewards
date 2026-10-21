@@ -49,6 +49,9 @@
       "reconfigure_successful": "Integrationen har konfigurerats om.",
       "reauth_successful": "Du har loggat in igen.",
       "unknown": "Ett okänt fel inträffade."
+    },
+    "progress": {
+      "validating": "Validerar status för Grid Rewards..."
     }
   },
   "options": {

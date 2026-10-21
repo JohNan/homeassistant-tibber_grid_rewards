@@ -49,6 +49,9 @@
             "reconfigure_successful": "The integration has been reconfigured successfully.",
             "reauth_successful": "Re-authentication was successful",
             "unknown": "An unknown error occurred."
+        },
+        "progress": {
+            "validating": "Validating Grid Rewards status..."
         }
     },
     "options": {
