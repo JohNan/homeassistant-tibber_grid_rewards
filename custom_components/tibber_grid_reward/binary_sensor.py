@@ -113,7 +113,7 @@ class FlexDeviceGridRewardActiveSensor(BinarySensorEntity):
         self._device_type = device.get("type")
         self._device_name = device.get("name", self._device_id)
         self._attributes: dict[str, Any] = {}
-        self._attr_is_on = False
+        self._attr_is_on = None
         self._attr_unique_id = f"{self._device_id}_{self.entity_description.key}"
         self._attr_name = f"{self._device_name} {self.entity_description.name}"
 
@@ -140,7 +140,10 @@ class FlexDeviceGridRewardActiveSensor(BinarySensorEntity):
             self.unique_id,
             data,
         )
-        flex_devices = data.get("flexDevices", [])
+        # Each snapshot replaces the previous status, including absent devices.
+        self._attr_is_on = None
+        self._attributes = {}
+        flex_devices = data.get("flexDevices") or []
         device_id_key = "vehicleId" if self._device_type == "vehicle" else "batteryId"
         for dev in flex_devices:
             dev_id = (
@@ -148,8 +151,9 @@ class FlexDeviceGridRewardActiveSensor(BinarySensorEntity):
             )
             if dev_id == self._device_id:
                 state_data = dev.get("state") or {}
+                state_type = state_data.get("__typename")
                 self._attr_is_on = (
-                    state_data.get("__typename") == "GridRewardDelivering"
+                    state_type == "GridRewardDelivering" if state_type else None
                 )
                 attrs: dict[str, Any] = {}
                 if "__typename" in state_data:
@@ -161,6 +165,6 @@ class FlexDeviceGridRewardActiveSensor(BinarySensorEntity):
                 if "reasons" in state_data and state_data["reasons"] is not None:
                     attrs["reasons"] = state_data["reasons"]
                 self._attributes = attrs
-                if self.hass is not None:
-                    self.async_write_ha_state()
                 break
+        if self.hass is not None:
+            self.async_write_ha_state()

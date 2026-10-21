@@ -592,7 +592,10 @@ class FlexDeviceSensor(SensorEntity):
         _LOGGER.debug(
             "Updating flex device sensor %s with data: %s", self.unique_id, data
         )
-        flex_devices = data.get("flexDevices", [])
+        # Each snapshot replaces the previous status, including absent devices.
+        self._attributes = {}
+        self._attr_native_value = None
+        flex_devices = data.get("flexDevices") or []
         device_id_key = "vehicleId" if self._device_type == "vehicle" else "batteryId"
         for device in flex_devices:
             dev_id = (
@@ -603,9 +606,9 @@ class FlexDeviceSensor(SensorEntity):
             if dev_id == self._device_id:
                 self._attributes = device
                 self._attr_native_value = self._get_state(device)
-                if self.hass is not None:
-                    self.async_write_ha_state()
                 break
+        if self.hass is not None:
+            self.async_write_ha_state()
 
     def _get_state(self, data):
         """Get the state of the sensor."""

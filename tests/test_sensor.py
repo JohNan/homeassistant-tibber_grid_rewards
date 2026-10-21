@@ -178,6 +178,119 @@ async def test_flex_device_sensor(mock_api, entry_id, description):
     sensor.async_write_ha_state.assert_called_once()
 
 
+@pytest.mark.parametrize("description", FLEX_DEVICE_SENSORS, ids=lambda d: d.key)
+@pytest.mark.parametrize(
+    "device_type, device_id_key, delivering_connectivity, available_connectivity",
+    [
+        ("vehicle", "vehicleId", "Plugged In", "Unplugged"),
+        ("battery", "batteryId", "Online", "Online"),
+    ],
+    ids=["vehicle", "battery"],
+)
+@pytest.mark.parametrize(
+    "missing_snapshot",
+    [
+        pytest.param(
+            {
+                "flexDevices": [
+                    {
+                        "vehicleId": "other-vehicle",
+                        "state": {"__typename": "GridRewardDelivering"},
+                        "isPluggedIn": True,
+                    },
+                    {
+                        "batteryId": "other-battery",
+                        "state": {"__typename": "GridRewardDelivering"},
+                    },
+                ]
+            },
+            id="other-devices",
+        ),
+        pytest.param({"flexDevices": []}, id="empty-list"),
+        pytest.param({}, id="missing-key"),
+        pytest.param({"flexDevices": None}, id="null-list"),
+    ],
+)
+async def test_flex_device_sensor_missing_snapshot_clears_state_and_recovers(
+    mock_api,
+    entry_id,
+    description,
+    device_type,
+    device_id_key,
+    delivering_connectivity,
+    available_connectivity,
+    missing_snapshot,
+):
+    """A missing device loses stale status and recovers on the same entity."""
+    device = {"id": "flex-device", "type": device_type, "name": "Tribe1"}
+    sensor = FlexDeviceSensor(mock_api, entry_id, device, description)
+    expected_values = {
+        "state": ("GridRewardDelivering", "GridRewardAvailable"),
+        "grid_reward_reason": ("excess", "SmartCharging"),
+        "connectivity": (delivering_connectivity, available_connectivity),
+    }
+    delivering_value, available_value = expected_values[description.key]
+    expected_device_info = {
+        "identifiers": {(DOMAIN, "flex-device")},
+        "name": "Tribe1",
+        "manufacturer": "Tibber",
+        "via_device": (DOMAIN, entry_id),
+    }
+    expected_unique_id = f"flex-device_{description.key}"
+
+    sensor.update_data(
+        {
+            "flexDevices": [
+                {
+                    device_id_key: "flex-device",
+                    "state": {
+                        "__typename": "GridRewardDelivering",
+                        "reason": "excess",
+                    },
+                    "isPluggedIn": True,
+                }
+            ]
+        }
+    )
+    assert sensor.native_value == delivering_value
+    assert sensor.extra_state_attributes == (
+        {"state": "GridRewardDelivering", "reason": "excess"}
+        if description.key in ("state", "grid_reward_reason")
+        else {}
+    )
+
+    sensor.update_data(missing_snapshot)
+
+    assert sensor.native_value is None
+    assert sensor.extra_state_attributes == {}
+    assert sensor.unique_id == expected_unique_id
+    assert sensor.device_info == expected_device_info
+
+    sensor.update_data(
+        {
+            "flexDevices": [
+                {
+                    device_id_key: "flex-device",
+                    "state": {
+                        "__typename": "GridRewardAvailable",
+                        "kind": "SmartCharging",
+                    },
+                    "isPluggedIn": False,
+                }
+            ]
+        }
+    )
+
+    assert sensor.native_value == available_value
+    assert sensor.extra_state_attributes == (
+        {"state": "GridRewardAvailable", "kind": "SmartCharging"}
+        if description.key in ("state", "grid_reward_reason")
+        else {}
+    )
+    assert sensor.unique_id == expected_unique_id
+    assert sensor.device_info == expected_device_info
+
+
 @pytest.fixture
 def mock_hass():
     """Mock HomeAssistant instance."""

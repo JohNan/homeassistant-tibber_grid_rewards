@@ -1,9 +1,14 @@
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.tibber_grid_reward.binary_sensor import (
     GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION,
+    FlexDeviceGridRewardActiveSensor,
     GridRewardActiveSensor,
 )
 from custom_components.tibber_grid_reward.const import DOMAIN
@@ -152,6 +157,177 @@ def test_flex_device_binary_sensor_battery():
     sensor.update_data(payload)
     assert sensor.is_on
     assert sensor.extra_state_attributes["state"] == "GridRewardDelivering"
+
+
+@pytest.mark.parametrize("device_type", ["vehicle", "battery"])
+def test_flex_device_binary_sensor_initial_state_unknown(device_type):
+    """A device has no known reward status before its first snapshot."""
+    sensor = FlexDeviceGridRewardActiveSensor(
+        MagicMock(),
+        "entry1",
+        {"id": "device1", "type": device_type, "name": "Device"},
+        GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION,
+    )
+
+    assert sensor.is_on is None
+
+
+@pytest.mark.parametrize(
+    "device_type, id_key", [("vehicle", "vehicleId"), ("battery", "batteryId")]
+)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "flexDevices": [
+                {"batteryId": "other", "state": {"__typename": "GridRewardAvailable"}}
+            ]
+        },
+        {"flexDevices": []},
+        {"flexDevices": None},
+        {},
+    ],
+)
+def test_flex_device_binary_sensor_missing_device_unknown(device_type, id_key, payload):
+    """A missing device must lose its previous active status and reason."""
+    sensor = FlexDeviceGridRewardActiveSensor(
+        MagicMock(),
+        "entry1",
+        {"id": "device1", "type": device_type, "name": "Device"},
+        GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION,
+    )
+    sensor.update_data(
+        {
+            "flexDevices": [
+                {
+                    id_key: "device1",
+                    "state": {"__typename": "GridRewardDelivering", "reason": "excess"},
+                }
+            ]
+        }
+    )
+    assert sensor.is_on is True
+
+    sensor.update_data(payload)
+
+    assert sensor.is_on is None
+    assert sensor.extra_state_attributes == {}
+
+
+@pytest.mark.parametrize(
+    "device_type, id_key", [("vehicle", "vehicleId"), ("battery", "batteryId")]
+)
+@pytest.mark.parametrize("state_fields", [{}, {"state": None}, {"state": {}}])
+def test_flex_device_binary_sensor_missing_state_unknown(
+    device_type, id_key, state_fields
+):
+    """A listed device without a status is unknown rather than inactive."""
+    sensor = FlexDeviceGridRewardActiveSensor(
+        MagicMock(),
+        "entry1",
+        {"id": "device1", "type": device_type, "name": "Device"},
+        GRID_REWARD_ACTIVE_SENSOR_DESCRIPTION,
+    )
+    sensor.update_data(
+        {
+            "flexDevices": [
+                {
+                    id_key: "device1",
+                    "state": {"__typename": "GridRewardDelivering", "reason": "excess"},
+                }
+            ]
+        }
+    )
+
+    sensor.update_data({"flexDevices": [{id_key: "device1", **state_fields}]})
+
+    assert sensor.is_on is None
+    assert sensor.extra_state_attributes == {}
+
+
+@pytest.mark.parametrize(
+    "device_type, id_key", [("vehicle", "vehicleId"), ("battery", "batteryId")]
+)
+@pytest.mark.parametrize(
+    "returned_state, expected_state",
+    [("GridRewardDelivering", STATE_ON), ("GridRewardAvailable", STATE_OFF)],
+)
+async def test_missing_flex_device_preserved_in_home_assistant(
+    hass, device_type, id_key, returned_state, expected_state
+):
+    """Snapshots update HA to unknown while retaining registry identity."""
+    device = {"id": "device1", "type": device_type, "name": "Tribe 1"}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            "username": "user@example.com",
+            "password": "password",
+            "home_id": "home1",
+            "flex_devices": [device],
+        },
+    )
+    entry.add_to_hass(hass)
+    with (
+        patch("custom_components.tibber_grid_reward.PLATFORMS", ["binary_sensor"]),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "home1"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        api = hass.data[DOMAIN][entry.entry_id]["api"]
+        entity_registry = er.async_get(hass)
+        device_registry = dr.async_get(hass)
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, "device1_grid_reward_active"
+        )
+        registered_entity = entity_registry.async_get(entity_id)
+        registered_device = device_registry.async_get(registered_entity.device_id)
+
+        def push_snapshot(devices):
+            api._dispatch_grid_reward(
+                {
+                    "homeId": "home1",
+                    "state": {"__typename": "GridRewardAvailable"},
+                    "flexDevices": devices,
+                }
+            )
+
+        push_snapshot(
+            [
+                {
+                    id_key: "device1",
+                    "state": {"__typename": "GridRewardDelivering", "reason": "excess"},
+                }
+            ]
+        )
+        assert hass.states.get(entity_id).state == STATE_ON
+
+        # The log keeps Solis in the snapshot when Tribe 1 disappears.
+        push_snapshot(
+            [{"batteryId": "other", "state": {"__typename": "GridRewardAvailable"}}]
+        )
+        assert hass.states.get(entity_id).state == STATE_UNKNOWN
+        assert "state" not in hass.states.get(entity_id).attributes
+        assert "reason" not in hass.states.get(entity_id).attributes
+        assert entity_registry.async_get(entity_id).id == registered_entity.id
+        assert device_registry.async_get(registered_device.id) is not None
+        assert entry.data["flex_devices"] == [device]
+
+        push_snapshot([{id_key: "device1", "state": {"__typename": returned_state}}])
+        assert hass.states.get(entity_id).state == expected_state
+        assert entity_registry.async_get(entity_id).device_id == registered_device.id
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_binary_sensor_async_setup_entry_multiple_devices():
