@@ -18,6 +18,7 @@ from custom_components.tibber_grid_reward.sensor import (
     BATTERY_SAVINGS_SENSORS,
     FLEX_DEVICE_SENSORS,
     GRID_REWARD_SENSORS,
+    PRICE_SENSOR_DESCRIPTION,
     BatteryActivitySensor,
     BatteryPlannedActivitySensor,
     BatterySavingsSensor,
@@ -345,8 +346,12 @@ async def test_price_sensor_isolation(mock_public_api, mock_hass, mock_config_en
     )
 
 
-async def test_price_sensor_update():
-    """Test PriceSensor correctly extracts current price and currency from today/tomorrow arrays."""
+@pytest.mark.parametrize(
+    ("currency", "expected_unit"),
+    [("EUR", "EUR/kWh"), ("SEK", "SEK/kWh"), ("NOK", "NOK/kWh")],
+)
+async def test_price_sensor_update(currency, expected_unit):
+    """Test PriceSensor reports the current electricity price per kWh."""
     mock_public_api = MagicMock()
 
     now = dt_util.now()
@@ -373,27 +378,25 @@ async def test_price_sensor_update():
                     "energy": 0.4,
                     "tax": 0.1,
                     "startsAt": current_hour_str,
-                    "currency": "SEK",
+                    "currency": currency,
                 }
             ],
             "tomorrow": [],
         }
     )
 
-    description = MagicMock()
-    description.key = "current_price"
-
     sensor = PriceSensor(
         mock_public_api,
         "test_home_id",
         "test_entry_id",
-        description,
+        PRICE_SENSOR_DESCRIPTION,
     )
 
     await sensor.async_update()
 
     assert sensor.native_value == 0.5
-    assert sensor.native_unit_of_measurement == "SEK"
+    assert sensor.native_unit_of_measurement == expected_unit
+    assert sensor.device_class is None
 
 
 def test_sensor_update_data_no_hass(mock_api, entry_id):
