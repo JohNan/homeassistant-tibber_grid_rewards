@@ -5,8 +5,9 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
 
 from .client import TibberAPI, TibberAuthError, TibberConnectionError
@@ -14,6 +15,45 @@ from .const import CONF_API_KEY, DOMAIN
 from .public_client import TibberPublicAPI, TibberPublicAuthError, TibberPublicException
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@callback
+def _remove_unselected_flex_devices(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry, selected_ids: set[str]
+) -> None:
+    """Remove this entry's unselected flex devices after reconfiguration."""
+    selected_identifiers = {(DOMAIN, device_id) for device_id in selected_ids}
+    parent_identifier = (DOMAIN, entry.entry_id)
+    device_registry = dr.async_get(hass)
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
+        if parent_identifier in device.identifiers:
+            continue
+        flex_identifiers = {
+            identifier for identifier in device.identifiers if identifier[0] == DOMAIN
+        }
+        if not flex_identifiers or not flex_identifiers.isdisjoint(
+            selected_identifiers
+        ):
+            continue
+
+        # Before HA 2026.8, a registry device could belong to several entries.
+        if (
+            hasattr(device, "config_entry_id")
+            and device.config_entry_id != entry.entry_id
+        ):
+            continue
+
+        _LOGGER.info(
+            "Removing unselected flex device %s from config entry %s",
+            sorted(identifier[1] for identifier in flex_identifiers),
+            entry.entry_id,
+        )
+        if not hasattr(device, "config_entry_id") and len(device.config_entries) > 1:
+            device_registry.async_update_device(
+                device.id, remove_config_entry_id=entry.entry_id
+            )
+        else:
+            device_registry.async_remove_device(device.id)
 
 
 class NoHomesFound(AbortFlow):
@@ -84,6 +124,7 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.homes = {}
         self.flex_devices = {}
         self.validation_task: asyncio.Task | None = None
+        self._reconfigure_validated = False
 
     async def async_step_user(self, user_input=None):
         errors = {}
@@ -278,43 +319,84 @@ class TibberGridRewardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(self, user_input=None) -> FlowResult:
         """Handle a reconfiguration flow to allow changing flex devices."""
         self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        self.data = self.entry.data.copy()
-        self.data[CONF_API_KEY] = self._get_current_api_key()
+        if not self._reconfigure_validated:
+            self.data = self.entry.data.copy()
+            self.data[CONF_API_KEY] = self._get_current_api_key()
 
-        # _validate_grid_reward populates self.flex_devices
-        validation_result = await self._validate_grid_reward()
+            # Keep the device list shown in this form stable until submission.
+            validation_result = await self._validate_grid_reward()
+            if validation_result != "success":
+                return self.async_abort(reason=validation_result)
+            self._reconfigure_validated = True
 
-        if validation_result != "success":
-            return self.async_abort(reason=validation_result)
+        saved_devices = self.entry.data.get("flex_devices", [])
+        missing_devices = {
+            device["id"]: device
+            for device in saved_devices
+            if device["id"] not in self.flex_devices
+        }
 
         if user_input is not None:
             new_data = self.entry.data.copy()
-            new_data["flex_devices"] = [
-                {
-                    "id": dev_id,
-                    "type": self.flex_devices[dev_id]["type"],
-                    "name": self.flex_devices[dev_id]["name"],
-                }
-                for dev_id in user_input["flex_devices"]
-            ]
+            selected_available = set(user_input["flex_devices"])
+            selected_missing = set(user_input.get("keep_missing_flex_devices", []))
+            selected_devices = []
+            seen_ids = set()
+
+            for device in saved_devices:
+                dev_id = device["id"]
+                if dev_id in seen_ids:
+                    continue
+                if dev_id in selected_available:
+                    selected_devices.append({"id": dev_id, **self.flex_devices[dev_id]})
+                elif dev_id in selected_missing and dev_id in missing_devices:
+                    selected_devices.append(device.copy())
+                else:
+                    continue
+                seen_ids.add(dev_id)
+
+            for dev_id in user_input["flex_devices"]:
+                if dev_id not in seen_ids:
+                    selected_devices.append({"id": dev_id, **self.flex_devices[dev_id]})
+                    seen_ids.add(dev_id)
+
+            new_data["flex_devices"] = selected_devices
             self.hass.config_entries.async_update_entry(self.entry, data=new_data)
-            await self.hass.config_entries.async_reload(self.entry.entry_id)
+            # Only a saved reconfiguration reconciles registry devices; ordinary
+            # setup and reloads leave existing devices alone.
+            _remove_unselected_flex_devices(
+                self.hass, self.entry, {device["id"] for device in selected_devices}
+            )
+            # Loaded entries reload through their update listener.
+            if not self.entry.update_listeners:
+                await self.hass.config_entries.async_reload(self.entry.entry_id)
             return self.async_abort(reason="reconfigure_successful")
 
         device_names = {
             dev_id: info["name"] for dev_id, info in self.flex_devices.items()
         }
-        current_device_ids = [d["id"] for d in self.entry.data.get("flex_devices", [])]
+        current_device_ids = [
+            device["id"]
+            for device in saved_devices
+            if device["id"] in self.flex_devices
+        ]
+        schema = {
+            vol.Required("flex_devices", default=current_device_ids): cv.multi_select(
+                device_names
+            )
+        }
+        if missing_devices:
+            missing_names = {
+                dev_id: device.get("name", dev_id)
+                for dev_id, device in missing_devices.items()
+            }
+            schema[
+                vol.Required("keep_missing_flex_devices", default=list(missing_devices))
+            ] = cv.multi_select(missing_names)
 
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        "flex_devices", default=current_device_ids
-                    ): cv.multi_select(device_names)
-                }
-            ),
+            data_schema=vol.Schema(schema),
         )
 
     def _get_current_api_key(self) -> str:

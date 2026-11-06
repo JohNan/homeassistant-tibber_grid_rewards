@@ -20,7 +20,11 @@
             "reconfigure": {
                 "title": "Update Flex Devices",
                 "data": {
-                    "flex_devices": "Select the devices to control"
+                    "flex_devices": "Select the devices to control",
+                    "keep_missing_flex_devices": "Keep currently missing devices"
+                },
+                "data_description": {
+                    "keep_missing_flex_devices": "Tibber is not returning these devices right now. Leave a device selected to keep it in your configuration, or deselect it to remove it when you save."
                 }
             },
             "select_home": {
