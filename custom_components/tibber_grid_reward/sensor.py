@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE
+from homeassistant.const import PERCENTAGE, UnitOfEnergy
 from homeassistant.core import callback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -24,7 +24,6 @@ _LOGGER = logging.getLogger(__name__)
 PRICE_SENSOR_DESCRIPTION = SensorEntityDescription(
     key="current_price",
     name="Current Price",
-    device_class=SensorDeviceClass.MONETARY,
 )
 
 
@@ -695,7 +694,9 @@ class PriceSensor(SensorEntity):
         if current_price:
             self._attr_native_value = current_price.get("total")
             if "currency" in current_price:
-                self._attr_native_unit_of_measurement = current_price["currency"]
+                self._attr_native_unit_of_measurement = (
+                    f"{current_price['currency']}/{UnitOfEnergy.KILO_WATT_HOUR}"
+                )
 
         all_prices = [p["total"] for p in all_prices_data if p.get("total") is not None]
 
