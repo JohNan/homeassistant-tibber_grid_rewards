@@ -43,7 +43,6 @@ def test_switch_device_info(switch_entity):
         "identifiers": {(DOMAIN, "vehicle1")},
         "name": "My Car",
         "manufacturer": "Tibber",
-        "via_device": (DOMAIN, "test_entry_id"),
     }
 
 

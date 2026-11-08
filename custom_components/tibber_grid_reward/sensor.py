@@ -359,7 +359,6 @@ class BatterySavingsSensor(
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tibber",
-            "via_device": (DOMAIN, self._entry_id),
         }
 
     @property
@@ -416,7 +415,6 @@ class BatteryActivitySensor(
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tibber",
-            "via_device": (DOMAIN, self._entry_id),
         }
 
     def _get_current_interval(self) -> dict[str, Any] | None:
@@ -484,7 +482,6 @@ class BatteryPlannedActivitySensor(
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tibber",
-            "via_device": (DOMAIN, self._entry_id),
         }
 
     def _get_forecast(self) -> list[dict[str, Any]]:
@@ -566,7 +563,6 @@ class FlexDeviceSensor(SensorEntity):
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tibber",
-            "via_device": (DOMAIN, self._entry_id),
         }
 
     @property
@@ -834,7 +830,6 @@ class VehicleBatterySensor(SensorEntity):
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": "Tibber",
-            "via_device": (DOMAIN, self._entry_id),
         }
 
     def _apply_data(self, data: dict) -> None:

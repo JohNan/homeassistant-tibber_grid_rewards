@@ -33,6 +33,15 @@ MOCK_FLEX_DEVICES = {
 }
 
 
+async def test_user_flow_shows_form(hass: HomeAssistant):
+    """Removing the legacy class setting must not prevent setup."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+
+
 @pytest.fixture(name="mock_tibber_api")
 def mock_tibber_api_fixture():
     """Mock the TibberAPI client."""
