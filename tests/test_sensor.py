@@ -235,7 +235,6 @@ async def test_flex_device_sensor_missing_snapshot_clears_state_and_recovers(
         "identifiers": {(DOMAIN, "flex-device")},
         "name": "Tribe1",
         "manufacturer": "Tibber",
-        "via_device": (DOMAIN, entry_id),
     }
     expected_unique_id = f"flex-device_{description.key}"
 
@@ -442,7 +441,6 @@ async def test_vehicle_battery_sensor(mock_api, entry_id):
         "identifiers": {(DOMAIN, "vehicle1")},
         "name": "My Car",
         "manufacturer": "Tibber",
-        "via_device": (DOMAIN, entry_id),
     }
 
     # Test update from a later battery.level
@@ -603,7 +601,6 @@ async def test_battery_coordinator_and_sensors(mock_api, entry_id):
         "identifiers": {(DOMAIN, "battery1")},
         "name": "My Battery",
         "manufacturer": "Tibber",
-        "via_device": (DOMAIN, entry_id),
     }
 
     savings_month = BatterySavingsSensor(

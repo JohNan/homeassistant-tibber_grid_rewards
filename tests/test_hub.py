@@ -13,6 +13,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.tibber_grid_reward import async_setup_entry, async_unload_entry
 from custom_components.tibber_grid_reward.client import TibberAPI
 from custom_components.tibber_grid_reward.const import DOMAIN
+from custom_components.tibber_grid_reward.coordinator import (
+    TibberBatteryDataCoordinator,
+)
 from custom_components.tibber_grid_reward.hub import TibberAccountHub
 from custom_components.tibber_grid_reward.public_client import TibberPublicAPI
 
@@ -374,3 +377,368 @@ async def test_api_key_sync_on_entry_update(hass: HomeAssistant):
 
         await async_unload_entry(hass, entry_home1)
         await async_unload_entry(hass, entry_home2)
+
+
+async def test_grid_reward_push_refreshes_batteries(hass, mock_tibber_api):
+    """A WebSocket update must refresh every battery's telemetry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user@test.com_home1",
+        data={
+            "username": "user@test.com",
+            "password": "password",
+            "home_id": "home1",
+            "flex_devices": [
+                {"id": "battery1", "type": "battery"},
+                {"id": "battery2", "type": "battery"},
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    mock_tibber_api.get_homes = AsyncMock(return_value=[{"id": "home1"}])
+    mock_tibber_api.execute_query_blocks = AsyncMock(
+        return_value={"savings": {"TODAY": {"value": 12.5}}}
+    )
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI",
+            return_value=mock_tibber_api,
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_forward_entry_setups",
+            AsyncMock(),
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry)
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        update_callback = entry_data["hub"]._home_callbacks[entry.entry_id]
+        coordinators = entry_data["battery_coordinators"]
+        for battery_id in ("battery1", "battery2"):
+            coordinators[battery_id] = TibberBatteryDataCoordinator(
+                hass, mock_tibber_api, "home1", battery_id, config_entry=entry
+            )
+
+        try:
+            update_callback({})
+            await hass.async_block_till_done()
+
+            for coordinator in coordinators.values():
+                assert coordinator.data is not None
+                assert coordinator.data.savings["TODAY"]["value"] == 12.5
+
+            assert await async_unload_entry(hass, entry)
+            mock_tibber_api.execute_query_blocks.reset_mock()
+            update_callback({})
+            await hass.async_block_till_done()
+            mock_tibber_api.execute_query_blocks.assert_not_awaited()
+        finally:
+            for coordinator in coordinators.values():
+                await coordinator.async_shutdown()
+
+
+async def test_unload_cancels_inflight_battery_refresh(hass):
+    """A blocked battery request must not survive unloading its config entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="user@test.com_h1",
+        data={
+            "username": "user@test.com",
+            "password": "password",
+            "home_id": "h1",
+            "flex_devices": [{"id": "bat1", "type": "battery", "name": "Battery"}],
+        },
+    )
+    entry.add_to_hass(hass)
+    started, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def blocked_refresh():
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    with (
+        patch("custom_components.tibber_grid_reward.PLATFORMS", ["binary_sensor"]),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        entry_data = hass.data[DOMAIN][entry.entry_id]
+        coordinator = MagicMock()
+        coordinator.async_request_refresh = blocked_refresh
+        entry_data["battery_coordinators"]["bat1"] = coordinator
+        entry_data["hub"]._home_callbacks[entry.entry_id]({})
+        await asyncio.wait_for(started.wait(), 1)
+        try:
+            assert await asyncio.wait_for(
+                hass.config_entries.async_unload(entry.entry_id), 1
+            )
+            assert cancelled.is_set()
+        finally:
+            release.set()
+            await hass.async_block_till_done()
+
+
+async def test_device_links_exist_before_platform_setup(hass, mock_tibber_api):
+    """Platforms may register flex entities before home-level entities."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_h1",
+        unique_id="user@test.com_h1",
+        data={
+            "username": "user@test.com",
+            "password": "password",
+            "home_id": "h1",
+            "flex_devices": [
+                {"id": "car1", "type": "vehicle", "name": "Car"},
+                {"id": "bat1", "type": "battery", "name": "Battery"},
+            ],
+        },
+    )
+    entry.add_to_hass(hass)
+    mock_tibber_api.get_homes = AsyncMock(return_value=[{"id": "h1"}])
+    seen = []
+
+    async def inspect_before_platforms(config_entry, platforms):
+        registry = dr.async_get(hass)
+        devices = dr.async_entries_for_config_entry(registry, config_entry.entry_id)
+        by_identifier = {
+            identifier: device
+            for device in devices
+            for identifier in device.identifiers
+        }
+        parent = by_identifier[(DOMAIN, config_entry.entry_id)]
+        for identifier in ("car1", "bat1"):
+            child = by_identifier[(DOMAIN, identifier)]
+            assert child.via_device_id == parent.id
+            seen.append(identifier)
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI",
+            return_value=mock_tibber_api,
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=inspect_before_platforms,
+        ),
+    ):
+        assert await async_setup_entry(hass, entry)
+        assert seen == ["car1", "bat1"]
+
+
+async def test_shared_flex_device_keeps_existing_parent(hass):
+    """A second home must not reparent or create an empty duplicate device."""
+
+    def make_entry(home):
+        return MockConfigEntry(
+            domain=DOMAIN,
+            entry_id=f"entry_{home}",
+            unique_id=f"user@test.com_{home}",
+            data={
+                "username": "user@test.com",
+                "password": "password",
+                "home_id": home,
+                "flex_devices": [
+                    {"id": "shared_car", "type": "vehicle", "name": "Car"}
+                ],
+            },
+        )
+
+    first, second = make_entry("h1"), make_entry("h2")
+    first.add_to_hass(hass)
+    with (
+        patch("custom_components.tibber_grid_reward.PLATFORMS", ["binary_sensor"]),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}, {"id": "h2"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+    ):
+        assert await hass.config_entries.async_setup(first.entry_id)
+        await hass.async_block_till_done()
+        registry = dr.async_get(hass)
+        entities = er.async_get(hass)
+        entity_id = entities.async_get_entity_id(
+            "binary_sensor", DOMAIN, "shared_car_grid_reward_active"
+        )
+        original_id = entities.async_get(entity_id).device_id
+        original_parent = registry.async_get(original_id).via_device_id
+        assert original_parent is not None
+
+        second.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(second.entry_id)
+        await hass.async_block_till_done()
+
+        assert registry.async_get(original_id).via_device_id == original_parent
+        other_flex_devices = [
+            device
+            for device in dr.async_entries_for_config_entry(registry, second.entry_id)
+            if (DOMAIN, "shared_car") in device.identifiers
+        ]
+        assert all(device.id == original_id for device in other_flex_devices)
+
+        assert await hass.config_entries.async_unload(second.entry_id)
+        assert await hass.config_entries.async_unload(first.entry_id)
+
+        # Once the original owner is unloaded, the other home may claim it.
+        assert await hass.config_entries.async_setup(second.entry_id)
+        await hass.async_block_till_done()
+        moved_entity = entities.async_get(entity_id)
+        assert moved_entity.config_entry_id == second.entry_id
+        moved_device = registry.async_get(moved_entity.device_id)
+        moved_parent = registry.async_get(moved_device.via_device_id)
+        assert (DOMAIN, second.entry_id) in moved_parent.identifiers
+        assert await hass.config_entries.async_unload(second.entry_id)
+
+
+@pytest.mark.parametrize("preexisting", [False, True])
+async def test_device_links_survive_setup_and_reload(hass, preexisting, caplog):
+    """Real entities keep their home and flex device identities and links."""
+    entries = []
+    for home, devices in (
+        ("h1", [{"id": "v1", "type": "vehicle", "name": "Car"}]),
+        ("h2", [{"id": "b2", "type": "battery", "name": "Battery"}]),
+    ):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            entry_id=f"entry_{home}",
+            unique_id=f"user@test.com_{home}",
+            data={
+                "username": "user@test.com",
+                "password": "password",
+                "home_id": home,
+                "flex_devices": devices,
+            },
+        )
+        entry.add_to_hass(hass)
+        entries.append(entry)
+
+    registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+    previous = {}
+    if preexisting:
+        for entry in entries:
+            parent = registry.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, entry.entry_id)},
+                name="Tibber Grid Reward",
+                manufacturer="Tibber",
+            )
+            flex = entry.data["flex_devices"][0]
+            child = registry.async_get_or_create(
+                config_entry_id=entry.entry_id,
+                identifiers={(DOMAIN, flex["id"])},
+                name=flex["name"],
+                manufacturer="Tibber",
+            )
+            registry.async_update_device(child.id, via_device_id=parent.id)
+            previous[entry.entry_id] = (parent.id, child.id)
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}, {"id": "h2"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.execute_query_blocks",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+    ):
+        # Setting up the domain also starts the other existing config entry.
+        assert await hass.config_entries.async_setup(entries[0].entry_id)
+        await hass.async_block_till_done()
+        assert all(entry.entry_id in hass.data[DOMAIN] for entry in entries)
+
+        def get_device_ids(entry):
+            flex_id = entry.data["flex_devices"][0]["id"]
+            parent_entity_id = entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, f"{entry.entry_id}_grid_reward_active"
+            )
+            flex_entity_id = entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, f"{flex_id}_grid_reward_active"
+            )
+            parent_entity = entity_registry.async_get(parent_entity_id)
+            flex_entity = entity_registry.async_get(flex_entity_id)
+            parent = registry.async_get(parent_entity.device_id)
+            child = registry.async_get(flex_entity.device_id)
+            assert parent.identifiers == {(DOMAIN, entry.entry_id)}
+            assert child.identifiers == {(DOMAIN, flex_id)}
+            assert child.via_device_id == parent.id
+            return parent.id, child.id
+
+        first_ids = {entry.entry_id: get_device_ids(entry) for entry in entries}
+        if preexisting:
+            assert first_ids == previous
+        assert first_ids["entry_h1"][0] != first_ids["entry_h2"][0]
+        assert "deprecated `via_device` parameter" not in caplog.text
+
+        for entry in entries:
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert {entry.entry_id: get_device_ids(entry) for entry in entries} == first_ids
+        for entry in entries:
+            assert len(dr.async_entries_for_config_entry(registry, entry.entry_id)) == 2
+            assert await hass.config_entries.async_unload(entry.entry_id)

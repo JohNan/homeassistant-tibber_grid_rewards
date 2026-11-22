@@ -5,6 +5,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry, ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.httpx_client import get_async_client
 
 from .client import TibberAPI, TibberAuthError
@@ -69,6 +70,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     session_tracker = RewardSessionTracker(hass)
     await session_tracker.async_load()
 
+    device_registry = dr.async_get(hass)
+    parent_device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="Tibber Grid Reward",
+        manufacturer="Tibber",
+    )
+    entity_registry = er.async_get(hass)
+    for flex_device in entry.data["flex_devices"]:
+        flex_id = flex_device["id"]
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, f"{flex_id}_grid_reward_active"
+        )
+        existing_entity = entity_registry.async_get(entity_id) if entity_id else None
+        owner_id = existing_entity.config_entry_id if existing_entity else None
+        owner_data = hass.data[DOMAIN].get(owner_id) if owner_id else None
+        if (
+            owner_id != entry.entry_id
+            and owner_data
+            and any(
+                device.get("id") == flex_id
+                for device in owner_data.get("flex_devices", [])
+            )
+        ):
+            # Entity unique IDs are shared across homes, so another active home
+            # already owns this device. Do not reparent it or create a duplicate.
+            continue
+        registered_device = device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, flex_id)},
+            name=flex_device.get("name", flex_id),
+            manufacturer="Tibber",
+        )
+        device_registry.async_update_device(
+            registered_device.id, via_device_id=parent_device.id
+        )
+
     hass.data[DOMAIN][entry.entry_id] = {
         "hub": hub,
         "api": api,
@@ -103,7 +141,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             device.update_data(data)
 
         for coordinator in entry_data.get("battery_coordinators", {}).values():
-            coordinator.async_request_refresh()
+            entry.async_create_background_task(
+                hass,
+                coordinator.async_request_refresh(),
+                name=f"{DOMAIN} battery refresh",
+            )
 
     def create_vehicle_update_callback(device_id):
         """Create a callback for a specific vehicle."""

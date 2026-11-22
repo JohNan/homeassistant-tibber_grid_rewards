@@ -86,7 +86,6 @@ def test_flex_device_binary_sensor_vehicle():
         "identifiers": {(DOMAIN, "car1")},
         "name": "Model 3",
         "manufacturer": "Tibber",
-        "via_device": (DOMAIN, "entry1"),
     }
 
     # Simulate delivering push
