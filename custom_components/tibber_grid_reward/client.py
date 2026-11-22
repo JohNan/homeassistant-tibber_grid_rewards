@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import ssl
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,7 +35,22 @@ class TibberConnectionError(TibberException):
     """Exception for connection errors."""
 
 
+@dataclass
+class _SubscriptionBackoff:
+    """Per-target backoff state for subscriptions ended by the server."""
+
+    failures: int = 0
+    retry_at: float = 0.0
+    warned: bool = False
+
+
 class TibberAPI:
+    SUBSCRIPTION_BACKOFF_INITIAL: float = 5.0
+    SUBSCRIPTION_BACKOFF_MAX: float = 300.0
+    SUBSCRIPTION_BACKOFF_FACTOR: float = 2.0
+    SUBSCRIPTION_STABLE_SECONDS: float = 60.0
+    SUBSCRIPTION_WARN_THRESHOLD: int = 3
+
     def __init__(self, username: str, password: str, client: httpx.AsyncClient):
         self.username: str = username
         self.password: str = password
@@ -46,6 +63,7 @@ class TibberAPI:
         self._home_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._vehicle_callbacks: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
         self._sub_refresh_event: asyncio.Event = asyncio.Event()
+        self._sub_backoff: dict[tuple[str, str], _SubscriptionBackoff] = {}
         self.home_id: str | None = None
 
     async def _get_ssl_context(self) -> ssl.SSLContext:
@@ -396,11 +414,212 @@ class TibberAPI:
                     "Error in vehicle callback for vehicle %s", vehicle_id
                 )
 
+    def _get_next_retry_timeout(
+        self, is_connected: bool, target_map: dict[tuple[str, str], str]
+    ) -> float | None:
+        """Return seconds until the earliest pending backoff retry, or None."""
+        if not is_connected or not self._sub_backoff:
+            return None
+        earliest = min(
+            (
+                backoff.retry_at
+                for target, backoff in self._sub_backoff.items()
+                if target not in target_map and backoff.retry_at > 0.0
+            ),
+            default=None,
+        )
+        if earliest is None:
+            return None
+        return max(0.0, earliest - time.monotonic())
+
+    def _has_due_retry(self, target_map: dict[tuple[str, str], str]) -> bool:
+        """Return True if any backed-off target is now due for retry."""
+        if not self._sub_backoff:
+            return False
+        now = time.monotonic()
+        return any(
+            target not in target_map and 0.0 < backoff.retry_at <= now
+            for target, backoff in self._sub_backoff.items()
+        )
+
+    def _clear_stable_backoffs(
+        self,
+        sub_map: dict[str, tuple[str, str]],
+        sub_started_at: dict[str, float],
+    ) -> None:
+        """Clear backoff state for subscriptions that stayed open long enough."""
+        now = time.monotonic()
+        for sub_id, target in sub_map.items():
+            started_at = sub_started_at.get(sub_id)
+            if (
+                started_at is not None
+                and (now - started_at) >= self.SUBSCRIPTION_STABLE_SECONDS
+            ):
+                self._sub_backoff.pop(target, None)
+
+    def _handle_next_message(
+        self,
+        data: dict[str, Any],
+        sub_map: dict[str, tuple[str, str]],
+        sub_started_at: dict[str, float],
+    ) -> None:
+        """Process an incoming GraphQL transport `next` message."""
+        sub_id = data.get("id")
+        raw_payload = data.get("payload")
+        payload = raw_payload if isinstance(raw_payload, dict) else {}
+        raw_data = payload.get("data")
+        payload_data = raw_data if isinstance(raw_data, dict) else {}
+        sub_info = sub_map.get(sub_id) if sub_id is not None else None
+
+        if errors := payload.get("errors"):
+            _LOGGER.warning(
+                "Multiplexed subscription payload errors for %s: %s",
+                sub_info or sub_id,
+                errors,
+            )
+
+        dispatched = False
+        if "gridRewardStatus" in payload_data:
+            reward_data = payload_data["gridRewardStatus"]
+            if reward_data:
+                home_id = reward_data.get("homeId") or (
+                    sub_info[1] if sub_info else None
+                )
+                self._dispatch_grid_reward(reward_data, home_id)
+                dispatched = True
+        elif "vehicleState" in payload_data:
+            vehicle_data = payload_data["vehicleState"]
+            if vehicle_data:
+                vehicle_id = vehicle_data.get("id") or (
+                    sub_info[1] if sub_info else None
+                )
+                if vehicle_id:
+                    self._dispatch_vehicle_state(vehicle_id, vehicle_data)
+                    dispatched = True
+
+        if dispatched and sub_info is not None and sub_id is not None:
+            started_at = sub_started_at.get(sub_id)
+            backoff = self._sub_backoff.get(sub_info)
+            if (
+                backoff is not None
+                and started_at is not None
+                and (time.monotonic() - started_at) >= self.SUBSCRIPTION_STABLE_SECONDS
+            ):
+                if backoff.warned:
+                    _LOGGER.info(
+                        "Subscription for %s target %s recovered.",
+                        sub_info[0],
+                        sub_info[1],
+                    )
+                del self._sub_backoff[sub_info]
+
+    def _handle_subscription_ended(
+        self,
+        sub_id: str | None,
+        reason: str,
+        sub_map: dict[str, tuple[str, str]],
+        target_map: dict[tuple[str, str], str],
+        sub_started_at: dict[str, float],
+        error_payload: Any = None,
+    ) -> None:
+        """Handle server-initiated subscription termination with per-target backoff."""
+        sub_info = sub_map.pop(sub_id, None) if sub_id is not None else None
+        started_at = sub_started_at.pop(sub_id, None) if sub_id is not None else None
+        if sub_info is None:
+            if reason == "error":
+                _LOGGER.error(
+                    "Multiplexed subscription error for unknown subscription %s: %s",
+                    sub_id,
+                    error_payload,
+                )
+            return
+
+        if target_map.get(sub_info) == sub_id:
+            del target_map[sub_info]
+
+        now = time.monotonic()
+        backoff = self._sub_backoff.get(sub_info)
+        if (
+            started_at is not None
+            and (now - started_at) >= self.SUBSCRIPTION_STABLE_SECONDS
+        ) or backoff is None:
+            backoff = _SubscriptionBackoff()
+            self._sub_backoff[sub_info] = backoff
+
+        backoff.failures += 1
+        exponent = min(backoff.failures - 1, 30)
+        try:
+            delay = min(
+                self.SUBSCRIPTION_BACKOFF_INITIAL
+                * (self.SUBSCRIPTION_BACKOFF_FACTOR**exponent),
+                self.SUBSCRIPTION_BACKOFF_MAX,
+            )
+        except OverflowError:
+            delay = self.SUBSCRIPTION_BACKOFF_MAX
+        delay = max(0.0, delay)
+        backoff.retry_at = now + delay
+
+        kind, target_id = sub_info
+        if reason == "error":
+            if backoff.failures == 1:
+                _LOGGER.error(
+                    "Multiplexed subscription error for %s target %s (id=%s): %s; retrying in %.0fs",
+                    kind,
+                    target_id,
+                    sub_id,
+                    error_payload,
+                    delay,
+                )
+            elif (
+                not backoff.warned
+                and backoff.failures >= self.SUBSCRIPTION_WARN_THRESHOLD
+            ):
+                backoff.warned = True
+                _LOGGER.warning(
+                    "Multiplexed subscription for %s target %s failed with errors %d consecutive times (%s); backing off up to %.0fs",
+                    kind,
+                    target_id,
+                    backoff.failures,
+                    error_payload,
+                    self.SUBSCRIPTION_BACKOFF_MAX,
+                )
+            else:
+                _LOGGER.debug(
+                    "Multiplexed subscription error for %s target %s (id=%s): %s; retrying in %.0fs (attempt %d)",
+                    kind,
+                    target_id,
+                    sub_id,
+                    error_payload,
+                    delay,
+                    backoff.failures,
+                )
+        elif (
+            not backoff.warned and backoff.failures >= self.SUBSCRIPTION_WARN_THRESHOLD
+        ):
+            backoff.warned = True
+            _LOGGER.warning(
+                "Subscription for %s target %s repeatedly completed by server (%d consecutive times); backing off up to %.0fs. If this device was removed or re-added in Tibber, reconfigure the integration",
+                kind,
+                target_id,
+                backoff.failures,
+                self.SUBSCRIPTION_BACKOFF_MAX,
+            )
+        else:
+            _LOGGER.debug(
+                "Subscription for %s target %s ended (%s); retrying in %.0fs (attempt %d)",
+                kind,
+                target_id,
+                reason,
+                delay,
+                backoff.failures,
+            )
+
     async def _sync_targets(
         self,
         websocket: Any,
         sub_map: dict[str, tuple[str, str]],
         target_map: dict[tuple[str, str], str],
+        sub_started_at: dict[str, float],
         get_active_targets: Callable[[], tuple[set[str], set[str]]],
     ) -> None:
         """Synchronize active subscriptions with the desired set of targets."""
@@ -408,13 +627,26 @@ class TibberAPI:
         wanted = {("home", h) for h in active_homes} | {
             ("vehicle", v) for v in active_vehicles
         }
+        for target in list(self._sub_backoff):
+            if target not in wanted:
+                del self._sub_backoff[target]
+
         current = set(target_map.keys())
+        now = time.monotonic()
 
         # Subscribe new targets
         for kind, target_id in wanted - current:
+            target = (kind, target_id)
+            backoff = self._sub_backoff.get(target)
+            if backoff is not None and backoff.retry_at > now:
+                continue
+            if backoff is not None:
+                backoff.retry_at = 0.0
+
             sub_id = str(uuid.uuid4())
-            sub_map[sub_id] = (kind, target_id)
-            target_map[(kind, target_id)] = sub_id
+            sub_map[sub_id] = target
+            target_map[target] = sub_id
+            sub_started_at[sub_id] = now
             if kind == "home":
                 msg = self._build_grid_reward_subscribe_message(target_id, sub_id)
             else:
@@ -431,6 +663,7 @@ class TibberAPI:
         for kind, target_id in current - wanted:
             sub_id = target_map.pop((kind, target_id))
             sub_map.pop(sub_id, None)
+            sub_started_at.pop(sub_id, None)
             _LOGGER.debug(
                 "Unsubscribing %s target %s with id %s",
                 kind,
@@ -444,10 +677,14 @@ class TibberAPI:
     ) -> None:
         """Run a single multiplexed websocket connection handling all homes and vehicles."""
         self._ws_reconnect = True
+        self._sub_backoff.clear()
         _LOGGER.info("Starting multiplexed Tibber websocket subscription.")
         try:
             while self._ws_reconnect:
                 recv_task: asyncio.Task[Any] | None = None
+                refresh_waiter: asyncio.Task[Any] | None = None
+                sub_map: dict[str, tuple[str, str]] = {}
+                sub_started_at: dict[str, float] = {}
                 try:
                     token = await self.fetch_token()
                     headers = {"Authorization": f"Bearer {token}"}
@@ -461,7 +698,6 @@ class TibberAPI:
                         self._websocket = websocket
                         await websocket.send(json.dumps({"type": "connection_init"}))
 
-                        sub_map: dict[str, tuple[str, str]] = {}
                         target_map: dict[tuple[str, str], str] = {}
                         is_connected = False
 
@@ -472,27 +708,30 @@ class TibberAPI:
                             refresh_waiter = asyncio.create_task(
                                 self._sub_refresh_event.wait()
                             )
+                            timeout = self._get_next_retry_timeout(
+                                is_connected, target_map
+                            )
                             done, _ = await asyncio.wait(
                                 [recv_task, refresh_waiter],
+                                timeout=timeout,
                                 return_when=asyncio.FIRST_COMPLETED,
                             )
 
                             if not self._ws_reconnect:
-                                if refresh_waiter not in done:
-                                    refresh_waiter.cancel()
                                 break
 
+                            should_sync = False
                             if refresh_waiter in done:
                                 self._sub_refresh_event.clear()
-                                if is_connected:
-                                    await self._sync_targets(
-                                        websocket,
-                                        sub_map,
-                                        target_map,
-                                        get_active_targets,
-                                    )
+                                refresh_waiter = None
+                                should_sync = True
                             else:
                                 refresh_waiter.cancel()
+                                with contextlib.suppress(asyncio.CancelledError):
+                                    await refresh_waiter
+                                refresh_waiter = None
+                                if not done:
+                                    should_sync = True
 
                             if recv_task in done:
                                 msg = recv_task.result()
@@ -505,55 +744,41 @@ class TibberAPI:
                                         "Multiplexed websocket connection acknowledged."
                                     )
                                     is_connected = True
-                                    await self._sync_targets(
-                                        websocket,
-                                        sub_map,
-                                        target_map,
-                                        get_active_targets,
-                                    )
+                                    should_sync = True
                                 elif msg_type == "ping":
                                     await websocket.send(json.dumps({"type": "pong"}))
                                 elif msg_type == "next":
-                                    sub_id = data.get("id")
-                                    payload_data = data.get("payload", {}).get(
-                                        "data", {}
+                                    self._handle_next_message(
+                                        data, sub_map, sub_started_at
                                     )
-                                    sub_info = sub_map.get(sub_id)
-                                    if "gridRewardStatus" in payload_data:
-                                        reward_data = payload_data["gridRewardStatus"]
-                                        if reward_data:
-                                            home_id = reward_data.get("homeId") or (
-                                                sub_info[1] if sub_info else None
-                                            )
-                                            self._dispatch_grid_reward(
-                                                reward_data, home_id
-                                            )
-                                    elif "vehicleState" in payload_data:
-                                        vehicle_data = payload_data["vehicleState"]
-                                        if vehicle_data:
-                                            vehicle_id = vehicle_data.get("id") or (
-                                                sub_info[1] if sub_info else None
-                                            )
-                                            if vehicle_id:
-                                                self._dispatch_vehicle_state(
-                                                    vehicle_id, vehicle_data
-                                                )
                                 elif msg_type == "complete":
-                                    sub_id = data.get("id")
-                                    sub_info = sub_map.pop(sub_id, None)
-                                    if sub_info:
-                                        target_map.pop(sub_info, None)
-                                        self._sub_refresh_event.set()
-                                elif msg_type == "error":
-                                    sub_id = data.get("id")
-                                    _LOGGER.error(
-                                        "Multiplexed subscription error for %s: %s",
-                                        sub_id,
-                                        data.get("payload"),
+                                    self._handle_subscription_ended(
+                                        data.get("id"),
+                                        "complete",
+                                        sub_map,
+                                        target_map,
+                                        sub_started_at,
                                     )
-                                    sub_info = sub_map.pop(sub_id, None)
-                                    if sub_info:
-                                        target_map.pop(sub_info, None)
+                                elif msg_type == "error":
+                                    self._handle_subscription_ended(
+                                        data.get("id"),
+                                        "error",
+                                        sub_map,
+                                        target_map,
+                                        sub_started_at,
+                                        error_payload=data.get("payload"),
+                                    )
+
+                            if is_connected and (
+                                should_sync or self._has_due_retry(target_map)
+                            ):
+                                await self._sync_targets(
+                                    websocket,
+                                    sub_map,
+                                    target_map,
+                                    sub_started_at,
+                                    get_active_targets,
+                                )
                 except (
                     websockets.exceptions.ConnectionClosedError,
                     websockets.exceptions.ConnectionClosedOK,
@@ -568,8 +793,17 @@ class TibberAPI:
                         "Error in websocket subscription, reconnecting in 5 seconds."
                     )
                 finally:
-                    if recv_task and not recv_task.done():
-                        recv_task.cancel()
+                    self._clear_stable_backoffs(sub_map, sub_started_at)
+                    self._websocket = None
+                    for task in (recv_task, refresh_waiter):
+                        if task is None:
+                            continue
+                        if not task.done():
+                            task.cancel()
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await task
+                        elif not task.cancelled():
+                            task.exception()
 
                 if self._ws_reconnect:
                     await asyncio.sleep(5)
