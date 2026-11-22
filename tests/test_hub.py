@@ -742,3 +742,66 @@ async def test_device_links_survive_setup_and_reload(hass, preexisting, caplog):
         for entry in entries:
             assert len(dr.async_entries_for_config_entry(registry, entry.entry_id)) == 2
             assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_setup_registers_home_after_platforms_are_loaded(hass: HomeAssistant):
+    """Hub registration must happen after platforms load so initial pushes are not missed."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="entry_order",
+        unique_id="user@test.com_h1",
+        data={
+            "username": "user@test.com",
+            "password": "secret_password",
+            "home_id": "h1",
+            "flex_devices": [{"id": "v1", "type": "vehicle"}],
+        },
+    )
+    entry.add_to_hass(hass)
+    call_order: list[str] = []
+
+    async def fake_forward_setups(config_entry, platforms):
+        call_order.append("platforms_setup")
+
+    orig_register_home = TibberAccountHub.register_home
+
+    def spy_register_home(self, reg_entry, grid_reward_cb, vehicle_cbs):
+        call_order.append("register_home")
+        return orig_register_home(self, reg_entry, grid_reward_cb, vehicle_cbs)
+
+    with (
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.get_homes",
+            AsyncMock(return_value=[{"id": "h1"}]),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.DailyRewardTracker.async_setup",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.RewardSessionTracker.async_load",
+            AsyncMock(),
+        ),
+        patch(
+            "custom_components.tibber_grid_reward.TibberAPI.run_multiplexed_subscription",
+            AsyncMock(),
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            side_effect=fake_forward_setups,
+        ),
+        patch.object(
+            TibberAccountHub,
+            "register_home",
+            autospec=True,
+            side_effect=spy_register_home,
+        ),
+        patch(
+            "homeassistant.config_entries.ConfigEntries.async_unload_platforms",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        assert await async_setup_entry(hass, entry) is True
+        assert call_order == ["platforms_setup", "register_home"]
+        assert await async_unload_entry(hass, entry) is True

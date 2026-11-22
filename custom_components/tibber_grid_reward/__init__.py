@@ -175,11 +175,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
             device_id = device["id"]
             vehicle_callbacks[device_id] = create_vehicle_update_callback(device_id)
 
-    hub.register_home(entry, update_grid_reward_sensors, vehicle_callbacks)
-
     entry.async_on_unload(entry.add_update_listener(update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    hub.register_home(entry, update_grid_reward_sensors, vehicle_callbacks)
 
     async def set_departure_time(call: ServiceCall):
         """Handle the service call to set the departure time."""
