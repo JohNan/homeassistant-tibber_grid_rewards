@@ -12,7 +12,7 @@ from custom_components.tibber_grid_reward.battery_blocks import (
     GraphQLQueryBlock,
     GraphQLQueryComposer,
 )
-from custom_components.tibber_grid_reward.client import TibberAPI
+from custom_components.tibber_grid_reward.client import TibberAPI, TibberConnectionError
 from custom_components.tibber_grid_reward.coordinator import (
     TibberBatteryData,
     TibberBatteryDataCoordinator,
@@ -408,6 +408,60 @@ async def test_coordinator_with_blocks_sequence(hass):
     await coordinator.async_refresh()
     assert len(coordinator.composer.blocks) == 2
     assert coordinator.data["savings"]["TODAY"]["value"] == 10.0
+
+
+async def test_coordinator_only_notifies_when_telemetry_changes(hass):
+    """Repeated identical telemetry must not trigger entity state writes."""
+    api = MagicMock(spec=TibberAPI)
+    api.execute_query_blocks = AsyncMock(
+        side_effect=[
+            {"savings": {"TODAY": {"value": 10.0}}},
+            {"savings": {"TODAY": {"value": 10.0}}},
+            {"savings": {"TODAY": {"value": 15.0}}},
+        ]
+    )
+    coordinator = TibberBatteryDataCoordinator(hass, api, "home1", "battery1")
+    values = []
+    unsubscribe = coordinator.async_add_listener(
+        lambda: values.append(coordinator.data.savings["TODAY"]["value"])
+    )
+    try:
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+        assert values == [10.0]
+
+        await coordinator.async_refresh()
+        assert values == [10.0, 15.0]
+        assert api.execute_query_blocks.await_count == 3
+    finally:
+        unsubscribe()
+        await coordinator.async_shutdown()
+
+
+async def test_coordinator_notifies_when_availability_changes(hass):
+    """A failure and recovery must notify even when the data is unchanged."""
+    api = MagicMock(spec=TibberAPI)
+    api.execute_query_blocks = AsyncMock(
+        side_effect=[
+            {"savings": {"TODAY": {"value": 10.0}}},
+            TibberConnectionError("connection lost"),
+            {"savings": {"TODAY": {"value": 10.0}}},
+        ]
+    )
+    coordinator = TibberBatteryDataCoordinator(hass, api, "home1", "battery1")
+    availability = []
+    unsubscribe = coordinator.async_add_listener(
+        lambda: availability.append(coordinator.last_update_success)
+    )
+    try:
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+        await coordinator.async_refresh()
+
+        assert availability == [True, False, True]
+    finally:
+        unsubscribe()
+        await coordinator.async_shutdown()
 
 
 def test_query_composer_null_data_handling():
