@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run hassfest
         # Awaiting maintained release tags: https://github.com/home-assistant/actions/issues/144
-        uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361
+        uses: home-assistant/actions/hassfest@9e9565e68f5a70d874202871f4c4064d23814235
 
   linter:
     name: Linter
